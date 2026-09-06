@@ -131,3 +131,47 @@ def test_record_keeps_audio_when_the_receiver_disappears():
 
     assert out.tolist() == [1, 2]
     assert stream.closed is True
+
+
+def test_channel_parity_survives_a_short_odd_block():
+    # Une lecture courte au compte d'échantillons impair : si le canal gauche
+    # n'était extrait qu'une fois, à la fin, tout ce qui suit basculerait sur
+    # le canal droit — celui qui porte le timecode.
+    odd = np.array([1, -1, 2], dtype=np.int16)
+    even = np.array([3, -3, 4, -4], dtype=np.int16)
+    stream = FakeStream([odd.tobytes(), even.tobytes()])
+    pa = FakePyAudio(stream)
+
+    out = record(pa, RxDevice(0, "Wireless PRO RX"), threading.Event())
+
+    assert out.tolist() == [1, 2, 3, 4]
+
+
+def test_teardown_failure_never_loses_the_capture():
+    # Récepteur arraché : `stop_stream` lève, comme le fait PortAudio sur un
+    # périphérique disparu. L'audio déjà capté doit survivre.
+    interleaved = np.array([1, -1, 2, -2], dtype=np.int16)
+    reads = []
+
+    def read_then_fail(_frames, exception_on_overflow=True):
+        if reads:
+            raise OSError("device disconnected")
+        reads.append(1)
+        return interleaved.tobytes()
+
+    class BrokenStream(FakeStream):
+        def stop_stream(self):
+            raise OSError("device unplugged")
+
+        def close(self):
+            self.closed = True
+            raise OSError("device unplugged")
+
+    stream = BrokenStream([])
+    stream.read = read_then_fail
+    pa = FakePyAudio(stream)
+
+    out = record(pa, RxDevice(0, "Wireless PRO RX"), threading.Event())
+
+    assert out.tolist() == [1, 2]
+    assert stream.closed is True

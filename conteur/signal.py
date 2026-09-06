@@ -27,6 +27,10 @@ def crest_factor(samples: np.ndarray) -> float:
 
 def looks_like_timecode(samples: np.ndarray) -> bool:
     """Vrai si le canal porte un signal binaire pleine échelle, pas de la voix."""
+    if samples.size == 0:
+        # Une capture vide n'est pas du timecode : c'est du silence, et
+        # `np.max` sur un tableau vide lèverait.
+        return False
     peak = float(np.max(np.abs(samples.astype(np.float64)))) / FULL_SCALE
     if peak < TIMECODE_MIN_PEAK:
         return False

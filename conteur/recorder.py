@@ -40,23 +40,33 @@ def record(pa, device: RxDevice, stop: threading.Event, on_block=None) -> np.nda
                 raw = stream.read(CHUNK, exception_on_overflow=False)
             except OSError:
                 break
-            block = np.frombuffer(raw, dtype=np.int16)
-            blocks.append(block)
+            # Le canal gauche est extrait bloc par bloc : une lecture courte
+            # au compte d'échantillons impair inverserait sinon gauche et
+            # droite pour tout ce qui suit, et le fichier finirait sur le
+            # canal timecode.
+            left = left_channel(np.frombuffer(raw, dtype=np.int16))
+            blocks.append(left)
             if on_block is not None:
                 try:
-                    on_block(left_channel(block))
+                    on_block(left)
                 except Exception:
                     # Un rappel d'interface qui échoue ne doit pas faire perdre
                     # la prise en cours.
                     pass
     finally:
+        # Sur un périphérique physiquement disparu, l'arrêt comme la fermeture
+        # peuvent lever : la fin de flux ne doit jamais emporter la prise.
         try:
             stream.stop_stream()
-        finally:
+        except Exception:
+            pass
+        try:
             stream.close()
+        except Exception:
+            pass
     if not blocks:
         return np.zeros(0, dtype=np.int16)
-    return left_channel(np.concatenate(blocks))
+    return np.concatenate(blocks)
 
 
 def write_wav(samples: np.ndarray, path: Path, rate: int = CAPTURE_RATE) -> None:

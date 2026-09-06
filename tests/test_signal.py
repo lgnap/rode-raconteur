@@ -80,3 +80,9 @@ def test_rms_dbfs_of_half_scale_is_near_minus_six():
 
 def test_rms_dbfs_of_silence_is_floored():
     assert rms_dbfs(np.zeros(1000, dtype=np.int16)) == -120.0
+
+
+def test_empty_capture_is_not_timecode():
+    # Une prise vide doit finir en « silence », pas en erreur : `np.max` sur un
+    # tableau vide lèverait ValueError.
+    assert looks_like_timecode(np.zeros(0, dtype=np.int16)) is False

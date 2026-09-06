@@ -34,7 +34,10 @@ def collect(targets: list[Path]) -> list[Path]:
     found: list[Path] = []
     for target in targets:
         if target.is_dir():
-            found.extend(sorted(target.rglob("*.wav")))
+            # Insensible à la casse : l'appareil écrit en .WAV, l'application
+            # en .wav, et les deux cohabitent dans la même arborescence.
+            found.extend(p for p in sorted(target.rglob("*"))
+                         if p.is_file() and p.suffix.lower() == ".wav")
         elif target.is_file():
             found.append(target)
     return [p for p in found if not p.name.startswith(".")]

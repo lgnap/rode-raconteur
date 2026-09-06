@@ -212,3 +212,11 @@ def test_a_short_take_is_transcribed_whole(tmp_path):
     name_recording(path, WHEN, model, title_fn=lambda t: ("x", "title"))
 
     assert model.durations[0] == pytest.approx(5.0, abs=0.5)
+
+
+def test_the_audible_threshold_leaves_room_below_a_faint_take(tmp_path):
+    """Mesuré sur un rush réel : -51,6 dBFS RMS avec un pic à -15 dBFS, donc
+    du son bien réel, était nommé « silence » sous un seuil à -50."""
+    from conteur.job import AUDIBLE_DBFS
+
+    assert AUDIBLE_DBFS <= -55.0

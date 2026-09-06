@@ -22,7 +22,7 @@ from conteur.transcribe import transcribe
 
 # Au-dessus de ce niveau RMS, un fichier est audible : s'il ne contient pas de
 # parole, ce n'est pas du silence.
-AUDIBLE_DBFS = -50.0
+AUDIBLE_DBFS = -55.0
 
 # Pour nommer un fichier, il suffit d'en écouter le début : transcrire une heure
 # d'audio pour produire trois mots est un gâchis. En deçà de ce plafond la prise

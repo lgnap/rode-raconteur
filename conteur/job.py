@@ -1,6 +1,5 @@
 """Un travail de nommage : lire le WAV, décider, renommer. Sans Qt."""
 
-import wave
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +13,7 @@ from conteur.naming import (
 )
 from conteur.paths import build_name, unique_path
 from conteur.signal import looks_like_timecode, rms_dbfs, to_whisper_input
+from conteur.wavread import read_samples
 from conteur.titler import make_title_tracked
 from conteur.transcribe import transcribe
 
@@ -31,8 +31,10 @@ class NameResult:
 
 
 def _read_wav(path: Path) -> np.ndarray:
-    with wave.open(str(path), "rb") as w:
-        return np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+    # Pas `wave` : il refuse le format 3 (flottant IEEE), celui des
+    # enregistrements embarqués RØDE. Sans cela l'application ne saurait
+    # nommer que ses propres fichiers.
+    return read_samples(path)
 
 
 def _renamed(wav_path: Path, when: datetime, slug: str, origin: str) -> NameResult:
@@ -41,26 +43,20 @@ def _renamed(wav_path: Path, when: datetime, slug: str, origin: str) -> NameResu
     return NameResult(path=target, slug=slug, origin=origin)
 
 
-def name_recording(
-    wav_path: Path,
-    when: datetime,
-    model,
-    title_fn=make_title_tracked,
-    threshold_s: float = 12.0,
-) -> NameResult:
-    """Nomme un enregistrement déjà écrit sur disque. Ne perd jamais le fichier."""
-    samples = _read_wav(wav_path)
+def decide_name(samples, model, title_fn=make_title_tracked,
+                threshold_s: float = 12.0) -> tuple[str, str]:
+    """Décide (slug, origine) pour un signal déjà lu. Sans I/O ni renommage.
 
+    Partagée avec les outils hors interface, pour que la reconnaissance y soit
+    la même que dans l'application plutôt qu'une copie qui divergerait.
+    """
     if samples.size == 0:
         # Prise vide (récepteur parti avant le premier bloc) : c'est du
-        # silence, pas un échec. Le fichier est conservé et nommé comme tel.
-        return _renamed(wav_path, when, SILENCE, ORIGIN_SILENCE)
+        # silence, pas un échec.
+        return SILENCE, ORIGIN_SILENCE
 
     if looks_like_timecode(samples):
-        # Renommée plutôt que laissée sous son nom provisoire : sinon la prise
-        # serait redétectée comme orpheline à chaque lancement, indéfiniment.
-        # Le nom dit aussi pourquoi elle n'a pas été transcrite.
-        return _renamed(wav_path, when, ORIGIN_TIMECODE, ORIGIN_TIMECODE)
+        return ORIGIN_TIMECODE, ORIGIN_TIMECODE
 
     text, speech_s = transcribe(model, to_whisper_input(samples))
 
@@ -78,10 +74,21 @@ def name_recording(
 
     if slug == SILENCE and rms_dbfs(samples) > AUDIBLE_DBFS:
         # Sonore mais sans parole reconnue : l'appeler « silence » serait faux.
-        # Mesuré sur du matériel réel : des prises culminant à -0,1 dBFS étaient
-        # nommées silence parce que le VAD n'y trouvait pas de parole.
         slug, origin = NO_SPEECH, ORIGIN_NO_SPEECH
+    return slug, origin
 
+
+def name_recording(
+    wav_path: Path,
+    when: datetime,
+    model,
+    title_fn=make_title_tracked,
+    threshold_s: float = 12.0,
+) -> NameResult:
+    """Nomme un enregistrement déjà écrit sur disque. Ne perd jamais le fichier."""
+    slug, origin = decide_name(_read_wav(wav_path), model, title_fn, threshold_s)
+    # Une prise timecode est renommée elle aussi : sinon le rattrapage des
+    # orphelins la redétecterait à chaque lancement, indéfiniment.
     return _renamed(wav_path, when, slug, origin)
 
 

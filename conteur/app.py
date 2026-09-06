@@ -20,6 +20,7 @@ from conteur.paths import FOLDER, build_name, destination_dir, music_dir, unique
 from conteur.recorder import record, write_wav
 from conteur.rx_device import find_rx as default_find_rx
 from conteur.signal import DBFS_FLOOR, rms_dbfs
+from conteur.titler import warm_up
 from conteur.transcribe import chosen_device, load_model
 from conteur.worker import NamingQueue
 
@@ -464,6 +465,10 @@ def main() -> int:
     window.resize(560, 420)
     window.show()
     interrupt_timer = install_interrupt_handler(app)  # noqa: F841 - garde la référence
+    # Préchauffage du titrage, hors de la fenêtre : elle ne doit pas faire de
+    # réseau. Sans lui, le premier titre de la session attend le chargement
+    # d'Ollama (30 s mesurées) et bascule sur le repli mots-clés.
+    threading.Thread(target=warm_up, daemon=True).start()
     window.recover_orphans()
     try:
         return app.exec()

@@ -32,7 +32,11 @@ def keywords(text: str, n: int = 3) -> list[str]:
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen3:8b"
-TIMEOUT_S = 20.0
+# Mesuré : 30 s au premier appel, le temps qu'Ollama charge qwen3:8b en VRAM,
+# puis 0,7 s à chaud. Un délai de 20 s faisait donc systématiquement basculer le
+# premier titre de chaque session sur le repli mots-clés.
+TIMEOUT_S = 60.0
+WARM_UP_TIMEOUT_S = 120.0
 MAX_TITLE_LEN = 120
 
 PROMPT = (
@@ -79,6 +83,26 @@ def title_from_ollama(text: str, post=None, timeout_s: float = TIMEOUT_S) -> str
     ):
         return None
     return candidate
+
+
+def warm_up(post=None) -> bool:
+    """Charge le modèle de titrage en VRAM, hors du chemin critique.
+
+    Sans cela le premier titre d'une session attend le chargement (30 s mesurées)
+    et bascule sur le repli mots-clés. Ne lève jamais : Ollama absent est un cas
+    normal, le repli existe pour ça.
+    """
+    if post is None:
+        import requests
+
+        post = requests.post
+    try:
+        post(OLLAMA_URL,
+             json={"model": OLLAMA_MODEL, "prompt": "ok", "stream": False, "think": False},
+             timeout=WARM_UP_TIMEOUT_S)
+    except Exception:
+        return False
+    return True
 
 
 def make_title(text: str, post=None) -> str:

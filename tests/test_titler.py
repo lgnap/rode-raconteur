@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from conteur.titler import keywords, make_title, strip_think, title_from_ollama
+from conteur.titler import TIMEOUT_S, keywords, make_title, strip_think, title_from_ollama
 
 
 def _post(response=None, exc=None):
@@ -65,7 +65,7 @@ def test_title_request_disables_thinking_and_streaming():
     assert post.seen.json["stream"] is False
     assert post.seen.json["think"] is False
     assert post.seen.json["model"] == "qwen3:8b"
-    assert post.seen.timeout == 20.0
+    assert post.seen.timeout == TIMEOUT_S
 
 
 def test_title_strips_think_block_defensively():
@@ -120,3 +120,30 @@ def test_unclosed_think_block_falls_back_to_keywords():
     title, origin = make_title_tracked(text, post=_post("<think>tronque"))
     assert origin == "keywords"
     assert "loup" in title
+
+
+# --- préchauffage du titrage ---
+
+
+def test_timeout_covers_a_cold_ollama():
+    """Mesuré : 30 s au premier appel, 0,7 s ensuite. Un délai de 20 s faisait
+    basculer le premier titre de chaque session sur le repli mots-clés."""
+    from conteur.titler import TIMEOUT_S
+
+    assert TIMEOUT_S >= 45.0
+
+
+def test_warm_up_loads_the_model_out_of_the_critical_path():
+    from conteur.titler import warm_up
+
+    post = _post("ok")
+    assert warm_up(post=post) is True
+    assert post.seen.json["model"] == "qwen3:8b"
+    assert post.seen.json["stream"] is False
+    assert post.seen.timeout > TIMEOUT_S       # le chargement peut être long
+
+
+def test_warm_up_never_raises_when_ollama_is_absent():
+    from conteur.titler import warm_up
+
+    assert warm_up(post=_post(exc=OSError("connection refused"))) is False

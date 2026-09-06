@@ -22,6 +22,16 @@ def test_music_dir_falls_back_to_home_music(monkeypatch, tmp_path):
     assert music_dir(runner=_runner("\n")) == tmp_path / "Music"
 
 
+def test_music_dir_falls_back_when_xdg_user_dir_is_missing(monkeypatch, tmp_path):
+    # xdg-utils absent de la machine : subprocess.run lève FileNotFoundError.
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    def raising_runner(*_args, **_kwargs):
+        raise FileNotFoundError("xdg-user-dir")
+
+    assert music_dir(runner=raising_runner) == tmp_path / "Music"
+
+
 def test_destination_dir_is_created_with_month_folder(tmp_path):
     out = destination_dir(WHEN, runner=_runner(f"{tmp_path}\n"))
     assert out == tmp_path / "Enregistrements" / "2026-09"

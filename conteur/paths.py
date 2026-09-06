@@ -13,7 +13,7 @@ def music_dir(runner=subprocess.run) -> Path:
         out = runner(
             ["xdg-user-dir", "MUSIC"], capture_output=True, text=True, check=False,
         ).stdout.strip()
-    except (OSError, FileNotFoundError):
+    except OSError:
         out = ""
     return Path(out) if out else Path.home() / "Music"
 

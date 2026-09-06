@@ -302,3 +302,180 @@ def test_rename_take_with_an_empty_slug_leaves_the_file_alone(qapp, tmp_path):
     assert path.exists()
     assert win._takes_meta[row] == (path, when)
     assert win.take_text(row) == f"{path.name}  ·  manuel"
+
+
+class Dev:
+    index = 0
+    name = "Wireless PRO RX"
+
+
+class RecordingQueue:
+    """File bouchonnée qui note ce qu'on lui soumet."""
+
+    def __init__(self):
+        self.submitted = []
+        self.stopped = False
+        self.joined = None
+
+    def start(self):
+        pass
+
+    def submit(self, path, when, on_done):
+        self.submitted.append((path, when, on_done))
+
+    def stop(self):
+        self.stopped = True
+
+    def join(self, timeout=None):
+        self.joined = timeout
+
+
+def test_capture_thread_failure_is_reported_and_does_not_crash_the_window(
+    qapp, tmp_path, monkeypatch,
+):
+    # Le récepteur part entre la détection et `pa.open()` : `record` lève dans
+    # le fil de capture. Sans garde, `_samples` reste None et `write_wav(None)`
+    # fait lever un AttributeError au cœur d'un slot Qt.
+    import conteur.app as app_mod
+
+    def exploding_record(pa, device, stop, on_block=None):
+        raise OSError("device disconnected")
+
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path)
+    monkeypatch.setattr(app_mod, "record", exploding_record)
+    monkeypatch.setattr(app_mod, "load_model", lambda: object())
+
+    queue = RecordingQueue()
+    win = MainWindow(find_rx=lambda: Dev(), queue=queue, pa=object())
+
+    win.toggle_recording()   # démarre
+    win.toggle_recording()   # arrête : le fil a levé
+
+    assert queue.submitted == []
+    assert win._rows == []
+    assert win._capture is None
+    assert win.record_button.text() == "Enregistrer"
+    text = win.status_label.text()
+    assert "device disconnected" in text
+
+
+def test_stop_control_stays_enabled_when_the_receiver_vanishes_mid_capture(
+    qapp, tmp_path, monkeypatch,
+):
+    import threading
+
+    import numpy as np
+
+    import conteur.app as app_mod
+
+    release = threading.Event()
+
+    def blocking_record(pa, device, stop, on_block=None):
+        release.wait(2.0)
+        return np.array([1, 2, 3], dtype=np.int16)
+
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path)
+    monkeypatch.setattr(app_mod, "record", blocking_record)
+    monkeypatch.setattr(app_mod, "load_model", lambda: object())
+
+    found = [Dev()]
+    queue = RecordingQueue()
+    win = MainWindow(find_rx=lambda: found[0], queue=queue, pa=object())
+
+    win.toggle_recording()   # démarre
+    found[0] = None          # le RX disparaît pendant la prise
+
+    win.refresh_device()
+
+    # Le bouton porte « Arrêter » : le désactiver rendrait la prise
+    # inarrêtable et l'audio déjà capté définitivement inatteignable.
+    assert win.record_button.isEnabled() is True
+    assert win.record_button.text() == "Arrêter"
+    assert app_mod.RX_LOST in win.status_label.text()
+
+    release.set()
+    win._capture.join(2.0)
+    win.refresh_device()     # le fil a rendu la main : le fragment est écrit
+
+    assert len(win._rows) == 1
+    assert app_mod.INCOMPLETE in win.take_text(0)
+    assert len(queue.submitted) == 1
+    assert queue.submitted[0][0].exists()
+
+
+def test_disconnect_is_detected_by_the_real_poll_timer(qapp, tmp_path, monkeypatch):
+    # Le chemin réel passe par le QTimer de 2 s : on le raccourcit et on fait
+    # tourner une vraie boucle d'évènements plutôt que d'appeler la fonction.
+    import numpy as np
+    from PySide6.QtTest import QTest
+
+    import conteur.app as app_mod
+
+    def blocking_record(pa, device, stop, on_block=None):
+        stop.wait(2.0)
+        return np.array([1, 2, 3], dtype=np.int16)
+
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path)
+    monkeypatch.setattr(app_mod, "record", blocking_record)
+    monkeypatch.setattr(app_mod, "load_model", lambda: object())
+
+    found = [Dev()]
+    queue = RecordingQueue()
+    win = MainWindow(find_rx=lambda: found[0], queue=queue, pa=object())
+    win._poll.setInterval(20)
+
+    win.toggle_recording()
+    found[0] = None
+    QTest.qWait(400)
+
+    assert win._capture is None
+    assert len(win._rows) == 1
+    assert app_mod.INCOMPLETE in win.take_text(0)
+    assert queue.submitted[0][0].exists()
+
+
+def test_a_late_automatic_name_does_not_erase_the_incomplete_marker(qapp, tmp_path):
+    import conteur.app as app_mod
+
+    win = MainWindow(find_rx=lambda: None, queue=None)
+    row = win.add_take("2026-09-06_143208_sans-nom.wav", incomplete=True)
+    win._takes_meta.append((tmp_path / "2026-09-06_143208_sans-nom.wav", None))
+    assert app_mod.INCOMPLETE in win.take_text(row)
+
+    win.update_take(row, "2026-09-06_143208_le-loup.wav", "title")
+
+    assert app_mod.INCOMPLETE in win.take_text(row)
+
+
+def test_write_error_survives_the_device_poll(qapp):
+    # Le sondage toutes les deux secondes réécrivait le nom du périphérique
+    # par-dessus le message d'erreur : il disparaissait avant d'être lu.
+    win = MainWindow(find_rx=lambda: Dev(), queue=None)
+    win.report_write_error("/plein/a.wav", OSError("disque plein"))
+
+    win.refresh_device()
+    win.refresh_device()
+
+    assert "disque plein" in win.status_label.text()
+
+
+def test_a_new_recording_clears_a_stale_error(qapp, tmp_path, monkeypatch):
+    import numpy as np
+
+    import conteur.app as app_mod
+
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path)
+    monkeypatch.setattr(
+        app_mod, "record",
+        lambda pa, device, stop, on_block=None: np.array([1, 2, 3], dtype=np.int16),
+    )
+    monkeypatch.setattr(app_mod, "load_model", lambda: object())
+
+    win = MainWindow(find_rx=lambda: Dev(), queue=RecordingQueue(), pa=object())
+    win.report_write_error("/plein/a.wav", OSError("disque plein"))
+
+    win.toggle_recording()   # geste de l'utilisateur : l'erreur n'a plus cours
+    win.refresh_device()
+
+    assert "disque plein" not in win.status_label.text()
+    win.toggle_recording()

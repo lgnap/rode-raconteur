@@ -21,6 +21,10 @@ from conteur.transcribe import load_model
 from conteur.worker import NamingQueue
 
 NO_DEVICE = "Branche le Wireless PRO RX pour enregistrer."
+RX_LOST = "Récepteur débranché — la prise en cours est incomplète."
+CAPTURE_FAILED = "Capture impossible"
+INCOMPLETE = "incomplet"
+PENDING = "transcription…"
 
 
 class MainWindow(QMainWindow):
@@ -38,6 +42,13 @@ class MainWindow(QMainWindow):
         # un "échec" dû à la course entre le renommage manuel et la file, qui
         # tient encore le chemin provisoire d'origine) ne doit plus les toucher.
         self._manually_renamed_rows: set[int] = set()
+        # Prises captées alors que le récepteur avait disparu : le fragment est
+        # conservé, mais la ligne doit dire qu'il est tronqué.
+        self._incomplete_rows: set[int] = set()
+        self._rx_lost = False
+        # Un message d'erreur ne doit pas être effacé par le prochain sondage
+        # du périphérique, deux secondes plus tard.
+        self._sticky_status = False
 
         self.setWindowTitle("Conteur")
         self.status_label = QLabel()
@@ -61,6 +72,7 @@ class MainWindow(QMainWindow):
         self.takes.itemDoubleClicked.connect(self._ask_rename)
         self._capture: threading.Thread | None = None
         self._samples = None
+        self._capture_error: BaseException | None = None
         self._model = None
         self._last_block = None
 
@@ -76,17 +88,51 @@ class MainWindow(QMainWindow):
 
     def refresh_device(self) -> None:
         device = self._find_rx()
+        if self._capture is not None:
+            # Capture en cours : le bouton porte « Arrêter ». Le désactiver
+            # rendrait la prise inarrêtable et l'audio déjà capté inatteignable.
+            self.record_button.setEnabled(True)
+            if device is None:
+                self._rx_lost = True
+                self._stop.set()
+                self._set_status(RX_LOST)
+            if self._rx_lost and not self._capture.is_alive():
+                # Le fil de capture a rendu la main : le fragment est écrit
+                # sans attendre un geste de l'utilisateur.
+                self._finish_capture()
+            return
         self.record_button.setEnabled(device is not None)
-        self.status_label.setText(device.name if device else NO_DEVICE)
+        self._set_status(device.name if device else NO_DEVICE)
 
-    def add_take(self, filename: str) -> int:
-        item = QListWidgetItem(f"{filename}  ·  transcription…")
+    def _set_status(self, text: str, sticky: bool = False) -> None:
+        """Affiche un état. Un message collant survit aux sondages suivants."""
+        if self._sticky_status and not sticky:
+            return
+        self.status_label.setText(text)
+        self._sticky_status = sticky
+
+    def _clear_status(self) -> None:
+        """Un geste de l'utilisateur lève la rémanence du dernier message."""
+        self._sticky_status = False
+
+    def add_take(self, filename: str, incomplete: bool = False) -> int:
+        item = QListWidgetItem()
         self.takes.addItem(item)
         self._rows.append(item)
-        return len(self._rows) - 1
+        row = len(self._rows) - 1
+        if incomplete:
+            self._incomplete_rows.add(row)
+        item.setText(self._row_text(row, filename, PENDING))
+        return row
+
+    def _row_text(self, row: int, filename: str, tail: str) -> str:
+        text = f"{filename}  ·  {tail}"
+        if row in self._incomplete_rows:
+            text += f"  ·  {INCOMPLETE}"
+        return text
 
     def update_take(self, row: int, filename: str, origin: str) -> None:
-        self._rows[row].setText(f"{filename}  ·  {origin}")
+        self._rows[row].setText(self._row_text(row, filename, origin))
 
     def take_text(self, row: int) -> str:
         return self._rows[row].text()
@@ -110,9 +156,7 @@ class MainWindow(QMainWindow):
             self.set_level(self._last_block)
 
     def report_write_error(self, path, error) -> None:
-        self.status_label.setText(
-            f"Écriture impossible dans {path} : {error}"
-        )
+        self._set_status(f"Écriture impossible dans {path} : {error}", sticky=True)
 
     def rename_take(self, row: int, new_text: str) -> None:
         path, when = self._takes_meta[row]
@@ -128,6 +172,7 @@ class MainWindow(QMainWindow):
             self.rename_take(row, text)
 
     def toggle_recording(self) -> None:
+        self._clear_status()
         if self._capture is None:
             self._start_capture()
         else:
@@ -140,18 +185,29 @@ class MainWindow(QMainWindow):
             return
         self._stop.clear()
         self._samples = None
+        self._capture_error = None
+        self._rx_lost = False
         self._last_block = None
 
         def on_block(block):
             self._last_block = block
 
         def run():
-            self._samples = record(self._pa, device, self._stop, on_block=on_block)
+            # Tout ce que lève la capture (typiquement `pa.open` sur un
+            # récepteur parti entre la détection et l'ouverture) reste dans le
+            # fil : sans cela, `_samples` resterait None et l'écriture du WAV
+            # planterait la fenêtre.
+            try:
+                self._samples = record(self._pa, device, self._stop, on_block=on_block)
+            except BaseException as error:      # noqa: BLE001 - jamais de fil mort muet
+                self._capture_error = error
 
         self._capture = threading.Thread(target=run, daemon=True)
         self._capture.start()
         self._level_timer.start()
         self.record_button.setText("Arrêter")
+        # La prise qui démarre chasse le message de la prise précédente.
+        self._set_status(device.name)
 
     def _finish_capture(self) -> None:
         self._stop.set()
@@ -161,15 +217,24 @@ class MainWindow(QMainWindow):
         self.level_bar.setValue(int(DBFS_FLOOR))
         self.record_button.setText("Enregistrer")
 
+        samples, error = self._samples, self._capture_error
+        incomplete, self._rx_lost = self._rx_lost, False
+        if samples is None:
+            # La capture a échoué avant d'avoir rendu quoi que ce soit : rien
+            # à écrire, mais l'utilisateur doit l'apprendre.
+            detail = f" : {error}" if error is not None else ""
+            self._set_status(f"{CAPTURE_FAILED}{detail}", sticky=True)
+            return
+
         when = datetime.now()
         target_dir = destination_dir(when)
         provisional = target_dir / build_name(when, "sans-nom")
         try:
-            write_wav(self._samples, provisional)
+            write_wav(samples, provisional)
         except OSError as error:
             self.report_write_error(provisional, error)
             return
-        row = self.add_take(provisional.name)
+        row = self.add_take(provisional.name, incomplete=incomplete)
         self._takes_meta.append((provisional, when))
 
         if self._model is None:

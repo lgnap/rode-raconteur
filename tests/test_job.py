@@ -119,3 +119,16 @@ def test_rename_take_rejects_an_empty_name(tmp_path):
     path.touch()
     assert rename_take(path, "!!!", WHEN) == path
     assert path.exists()
+
+
+def test_empty_capture_is_named_silence_not_failed(tmp_path):
+    # Récepteur parti avant le premier bloc : la prise est vide. Elle doit
+    # ressortir en « silence », pas faire lever le travail de nommage — la
+    # ligne afficherait alors « échec ».
+    path = _wav(tmp_path, np.zeros(0, dtype=np.int16))
+    result = name_recording(path, WHEN, FakeModel([]),
+                            title_fn=lambda t: ("x", "title"))
+    assert result.slug == "silence"
+    assert result.origin == "silence"
+    assert result.path.exists()
+    assert result.path.name == "2026-09-06_143208_silence.wav"

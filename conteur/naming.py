@@ -24,6 +24,33 @@ def slugify(text: str, max_len: int = 60) -> str:
 SILENCE = "silence"
 UNNAMED = "sans-nom"
 
+# Origine du nom d'une prise. Les jetons sont internes et stables : ils
+# circulent entre `job.py`, `titler.py`, la file et l'interface, et les tests
+# s'appuient dessus. Rien ne les affiche tels quels — l'interface passe par
+# `origin_label`, seule traduction, définie ici pour n'exister qu'une fois.
+ORIGIN_TRANSCRIPT = "transcript"
+ORIGIN_TITLE = "title"
+ORIGIN_KEYWORDS = "keywords"
+ORIGIN_TIMECODE = "timecode"
+ORIGIN_SILENCE = SILENCE
+ORIGIN_FAILED = "echec"
+ORIGIN_MANUAL = "manuel"
+
+ORIGIN_LABELS = {
+    ORIGIN_TRANSCRIPT: "transcription",
+    ORIGIN_TITLE: "titre généré",
+    ORIGIN_KEYWORDS: "mots-clés",
+    ORIGIN_TIMECODE: "canal timecode",
+    ORIGIN_SILENCE: "silence",
+    ORIGIN_FAILED: "échec",
+    ORIGIN_MANUAL: "manuel",
+}
+
+
+def origin_label(origin: str) -> str:
+    """Libellé français d'une origine, pour l'affichage seul."""
+    return ORIGIN_LABELS.get(origin, origin)
+
 
 def choose_name(
     text: str,

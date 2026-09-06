@@ -4,6 +4,8 @@ import re
 import unicodedata
 from collections import Counter
 
+from conteur.naming import ORIGIN_KEYWORDS, ORIGIN_TITLE
+
 STOPWORDS = {
     "alors", "apres", "aussi", "autre", "avait", "avec", "avoir", "bien",
     "cela", "cette", "comme", "dans", "deux", "dire", "donc", "elle", "elles",
@@ -93,5 +95,5 @@ def make_title_tracked(text: str, post=None) -> tuple[str, str]:
     """
     title = title_from_ollama(text, post=post)
     if title:
-        return title, "title"
-    return " ".join(keywords(text)), "keywords"
+        return title, ORIGIN_TITLE
+    return " ".join(keywords(text)), ORIGIN_KEYWORDS

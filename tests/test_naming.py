@@ -58,3 +58,31 @@ def test_empty_transcript_is_named_silence():
 
 def test_unusable_title_falls_back_to_sans_nom():
     assert choose_name("du texte", 30.0, lambda _t: "!!!") == "sans-nom"
+
+
+def test_origin_labels_are_french_for_every_internal_token():
+    from conteur.naming import (
+        ORIGIN_FAILED, ORIGIN_KEYWORDS, ORIGIN_MANUAL, ORIGIN_SILENCE,
+        ORIGIN_TIMECODE, ORIGIN_TITLE, ORIGIN_TRANSCRIPT, origin_label,
+    )
+
+    # Les jetons internes restent stables (job.py et les tests s'appuient
+    # dessus) ; seul l'affichage est traduit.
+    assert ORIGIN_TRANSCRIPT == "transcript"
+    assert ORIGIN_TITLE == "title"
+    assert ORIGIN_KEYWORDS == "keywords"
+    assert ORIGIN_TIMECODE == "timecode"
+
+    assert origin_label(ORIGIN_TRANSCRIPT) == "transcription"
+    assert origin_label(ORIGIN_TITLE) == "titre généré"
+    assert origin_label(ORIGIN_KEYWORDS) == "mots-clés"
+    assert origin_label(ORIGIN_TIMECODE) == "canal timecode"
+    assert origin_label(ORIGIN_SILENCE) == "silence"
+    assert origin_label(ORIGIN_FAILED) == "échec"
+    assert origin_label(ORIGIN_MANUAL) == "manuel"
+
+    # Rien d'anglais ne doit atteindre l'écran.
+    for token, label in [(ORIGIN_TITLE, origin_label(ORIGIN_TITLE)),
+                         (ORIGIN_KEYWORDS, origin_label(ORIGIN_KEYWORDS)),
+                         (ORIGIN_TRANSCRIPT, origin_label(ORIGIN_TRANSCRIPT))]:
+        assert label != token

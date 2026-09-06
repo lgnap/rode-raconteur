@@ -1,5 +1,6 @@
 """Fenêtre unique. Toute la logique vit ailleurs ; ce module ne fait que l'UI."""
 
+import signal as stdlib_signal
 import sys
 import threading
 from datetime import datetime
@@ -18,12 +19,13 @@ from conteur.paths import build_name, destination_dir, unique_path
 from conteur.recorder import record, write_wav
 from conteur.rx_device import find_rx as default_find_rx
 from conteur.signal import DBFS_FLOOR, rms_dbfs
-from conteur.transcribe import load_model
+from conteur.transcribe import chosen_device, load_model
 from conteur.worker import NamingQueue
 
 NO_DEVICE = "Branche le Wireless PRO RX pour enregistrer."
 RX_LOST = "Récepteur débranché — la prise en cours est incomplète."
 CAPTURE_FAILED = "Capture impossible"
+MODEL_LOADING = "Chargement du modèle de transcription…"
 MODEL_FAILED = "Modèle de transcription indisponible"
 AUDIO_UNAVAILABLE = "Sous-système audio indisponible"
 MISSING_FILE = "Fichier introuvable"
@@ -32,6 +34,21 @@ POLL_MS = 2000
 SHUTDOWN_TIMEOUT_S = 30.0
 INCOMPLETE = "incomplet"
 PENDING = "transcription…"
+
+
+def install_interrupt_handler(app, interval_ms: int = 200):
+    """Fait de Ctrl+C un arrêt propre, comme la fermeture de la fenêtre.
+
+    Qt exécute sa boucle en C++ ; un gestionnaire de signal Python ne tourne
+    qu'entre deux bytecodes du fil principal, et n'est donc jamais atteint tant
+    que la boucle est en cours. Le minuteur inerte rend périodiquement la main à
+    l'interpréteur, ce qui laisse le gestionnaire s'exécuter.
+    """
+    stdlib_signal.signal(stdlib_signal.SIGINT, lambda *_: app.quit())
+    timer = QTimer()
+    timer.timeout.connect(lambda: None)
+    timer.start(interval_ms)
+    return timer
 
 
 def describe_error(error: BaseException) -> str:
@@ -180,7 +197,20 @@ class MainWindow(QMainWindow):
         if device is None:
             device = self._rescan_devices()
         self.record_button.setEnabled(device is not None)
-        self._set_status(device.name if device else NO_DEVICE)
+        self._set_status((device.name if device else NO_DEVICE) + self._model_suffix())
+
+    def _model_suffix(self) -> str:
+        """Dit où en est le modèle, sans masquer l'état du périphérique.
+
+        Calculé ici plutôt qu'émis depuis le fil de chargement : un signal
+        traversant la frontière de fil vers une fenêtre déjà détruite plante
+        le processus.
+        """
+        if self._model_error is not None:
+            return f" — {MODEL_FAILED}"
+        if self._model_loader is not None and self._model is None:
+            return f" — {MODEL_LOADING}"
+        return ""
 
     def _set_status(self, text: str, sticky: bool = False) -> None:
         """Affiche un état. Un message collant survit aux sondages suivants."""
@@ -394,6 +424,7 @@ def main() -> int:
     window = MainWindow(pa=pyaudio.PyAudio(), pa_factory=pyaudio.PyAudio)
     window.resize(560, 420)
     window.show()
+    interrupt_timer = install_interrupt_handler(app)  # noqa: F841 - garde la référence
     try:
         return app.exec()
     finally:

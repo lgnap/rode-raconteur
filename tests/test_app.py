@@ -805,3 +805,68 @@ def test_naming_failure_reason_is_shown_and_survives_the_device_poll(qapp):
     # Le sondage périphérique ne doit pas effacer la cause.
     win.refresh_device()
     assert "CUDA" in win.status_label.text()
+
+
+# --- Ctrl+C et retour visuel du chargement ---
+
+
+def test_ctrl_c_asks_the_application_to_quit(qapp):
+    """Qt tourne en C++ : sans minuteur rendant la main à l'interpréteur, le
+    gestionnaire Python ne s'exécute jamais et Ctrl+C reste sans effet."""
+    import signal as sig
+
+    from conteur.app import install_interrupt_handler
+
+    class FakeApp:
+        def __init__(self):
+            self.quit_called = False
+
+        def quit(self):
+            self.quit_called = True
+
+    fake = FakeApp()
+    previous = sig.getsignal(sig.SIGINT)
+    try:
+        timer = install_interrupt_handler(fake, interval_ms=50)
+        assert timer.isActive() is True
+        sig.raise_signal(sig.SIGINT)
+        assert fake.quit_called is True
+    finally:
+        sig.signal(sig.SIGINT, previous)
+
+
+def test_status_says_the_model_is_still_loading_without_hiding_the_device(qapp):
+    class Dev:
+        index = 0
+        name = "Wireless PRO RX"
+
+    win = MainWindow(find_rx=lambda: Dev(), queue=None)
+    win._model_loader = object()      # chargement en cours
+    win._model = None
+    win.refresh_device()
+    assert "Wireless PRO RX" in win.status_label.text()
+    assert "Chargement" in win.status_label.text()
+
+
+def test_status_reports_a_model_that_failed_to_load(qapp):
+    class Dev:
+        index = 0
+        name = "Wireless PRO RX"
+
+    win = MainWindow(find_rx=lambda: Dev(), queue=None)
+    win._model_error = RuntimeError("libcublas absent")
+    win.refresh_device()
+    assert "Wireless PRO RX" in win.status_label.text()
+    assert "indisponible" in win.status_label.text()
+
+
+def test_status_is_clean_once_the_model_is_ready(qapp):
+    class Dev:
+        index = 0
+        name = "Wireless PRO RX"
+
+    win = MainWindow(find_rx=lambda: Dev(), queue=None)
+    win._model_loader = object()
+    win._model = object()
+    win.refresh_device()
+    assert win.status_label.text() == "Wireless PRO RX"

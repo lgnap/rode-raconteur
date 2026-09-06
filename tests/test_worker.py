@@ -1,4 +1,5 @@
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +19,10 @@ def test_jobs_run_one_at_a_time():
         with lock:
             active += 1
             concurrent.append(active)
+        # Fenêtre pendant laquelle un second travail concurrent serait visible.
+        # Sans elle, la région comptée n'a aucune durée et le test ne peut pas
+        # distinguer la sérialisation de son absence.
+        time.sleep(0.05)
         with lock:
             active -= 1
         return NameResult(path=path, slug=path.stem, origin="transcript")

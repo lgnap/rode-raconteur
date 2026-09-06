@@ -16,6 +16,7 @@ SPDX-License-Identifier: MIT
 """
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -27,7 +28,14 @@ from conteur.paths import unique_path        # noqa: E402
 from conteur.transcribe import chosen_device, load_model  # noqa: E402
 from conteur.wavread import read_samples     # noqa: E402
 
-ALREADY_NAMED = 2      # nombre de « __ » dans un nom déjà annoté
+# Un slug ajouté par cet outil : uniquement minuscules, chiffres et tirets.
+# Compter les « __ » ne suffit pas — un fichier d'appareil n'en a aucun avant
+# annotation, un morceau découpé en a déjà un (sa plage horaire).
+SLUG = re.compile(r"[a-z0-9-]+")
+
+
+def deja_annote(stem: str) -> bool:
+    return "__" in stem and SLUG.fullmatch(stem.rsplit("__", 1)[1]) is not None
 
 
 def collect(targets: list[Path]) -> list[Path]:
@@ -45,7 +53,7 @@ def collect(targets: list[Path]) -> list[Path]:
 
 def annotate(path: Path, model) -> tuple[Path, str] | None:
     """Renomme en ajoutant le slug reconnu. Rend None si déjà annoté."""
-    if path.stem.count("__") >= ALREADY_NAMED:
+    if deja_annote(path.stem):
         return None
     slug, origin = decide_name(read_samples(path), model)
     target = unique_path(path.parent, f"{path.stem}__{slug}{path.suffix}")

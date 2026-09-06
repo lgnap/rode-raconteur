@@ -44,7 +44,11 @@ def _read_wav(path: Path) -> np.ndarray:
     # Pas `wave` : il refuse le format 3 (flottant IEEE), celui des
     # enregistrements embarqués RØDE. Sans cela l'application ne saurait
     # nommer que ses propres fichiers.
-    return read_samples(path)
+    #
+    # La lecture est bornée à ce que le nommage peut consulter : au-delà, on
+    # convertirait des centaines de Mo pour ne jamais les regarder.
+    budget = int(NAMING_SAMPLE_S * NAMING_WINDOWS * CAPTURE_RATE)
+    return read_samples(path, max_frames=budget)
 
 
 def _renamed(wav_path: Path, when: datetime, slug: str, origin: str) -> NameResult:

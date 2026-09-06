@@ -35,8 +35,13 @@ def _chunks(f):
         f.seek(pos + size + (size & 1))
 
 
-def read_samples(path: Path) -> np.ndarray:
-    """Rend le premier canal, en int16, quel que soit le format d'origine."""
+def read_samples(path: Path, max_frames: int | None = None) -> np.ndarray:
+    """Rend le premier canal, en int16, quel que soit le format d'origine.
+
+    `max_frames` borne la lecture : nommer un fichier ne demande d'en écouter
+    que le début, et lire les 691 Mo d'une prise d'une heure pour n'en
+    transcrire que cinq minutes coûte du processeur pour rien.
+    """
     fmt = data = None
     with Path(path).open("rb") as f:
         for cid, size, pos in _chunks(f):
@@ -45,7 +50,11 @@ def read_samples(path: Path) -> np.ndarray:
                 fmt = f.read(size)
             elif cid == b"data":
                 f.seek(pos)
-                data = f.read(size)
+                wanted = size
+                if max_frames is not None and fmt is not None:
+                    block = struct.unpack("<H", fmt[12:14])[0]
+                    wanted = min(size, max_frames * block)
+                data = f.read(wanted)
             if fmt is not None and data is not None:
                 break
     if fmt is None or data is None:

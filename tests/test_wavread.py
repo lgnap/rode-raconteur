@@ -87,3 +87,30 @@ def test_a_file_that_is_not_wave_is_refused(tmp_path):
     path.write_bytes(b"pas du tout un RIFF")
     with pytest.raises(ValueError):
         read_samples(path)
+
+
+def test_reading_can_be_bounded(tmp_path):
+    """Lire les 691 Mo d'une prise d'une heure pour n'en transcrire que cinq
+    minutes coûte du processeur pour rien."""
+    path = tmp_path / "long.wav"
+    payload = np.arange(1000, dtype="<i2").tobytes()
+    _write_riff(path, 1, 16, 1, 48000, payload)
+
+    assert read_samples(path).size == 1000
+    assert read_samples(path, max_frames=100).size == 100
+    assert read_samples(path, max_frames=100).tolist() == list(range(100))
+
+
+def test_a_bound_larger_than_the_file_is_harmless(tmp_path):
+    path = tmp_path / "court.wav"
+    _write_riff(path, 1, 16, 1, 48000, np.arange(10, dtype="<i2").tobytes())
+    assert read_samples(path, max_frames=10_000).size == 10
+
+
+def test_the_bound_counts_frames_not_bytes(tmp_path):
+    """En stéréo 16 bits une trame fait quatre octets : confondre les deux
+    tronquerait au quart de ce qui est demandé."""
+    path = tmp_path / "stereo.wav"
+    interleaved = np.array([1, -1, 2, -2, 3, -3, 4, -4], dtype="<i2").tobytes()
+    _write_riff(path, 1, 16, 2, 48000, interleaved)
+    assert read_samples(path, max_frames=2).tolist() == [1, 2]

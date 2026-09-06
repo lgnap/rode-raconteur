@@ -42,7 +42,9 @@ def test_takes_list_shows_pending_then_final_name(qapp):
     assert "…" in win.take_text(row)
     win.update_take(row, "2026-09-06_143208_le-loup.wav", "title")
     assert "le-loup" in win.take_text(row)
-    assert "title" in win.take_text(row)
+    # Le jeton interne reste "title" ; l'interface, elle, est en français.
+    assert "titre généré" in win.take_text(row)
+    assert "title" not in win.take_text(row)
 
 
 def test_stop_writes_the_wav_before_submitting_the_naming_job(qapp, tmp_path, monkeypatch):
@@ -283,7 +285,7 @@ def test_successful_naming_updates_takes_meta_with_the_final_path(
     final_path, when = win._takes_meta[row]
     assert final_path.name == "2026-09-06_143208_le-loup.wav"
     assert "le-loup" in win.take_text(row)
-    assert "title" in win.take_text(row)
+    assert "titre généré" in win.take_text(row)
 
 
 def test_rename_take_with_an_empty_slug_leaves_the_file_alone(qapp, tmp_path):
@@ -479,3 +481,295 @@ def test_a_new_recording_clears_a_stale_error(qapp, tmp_path, monkeypatch):
 
     assert "disque plein" not in win.status_label.text()
     win.toggle_recording()
+
+
+class FakePa:
+    """Contexte PortAudio bouchonné : sa liste de périphériques est figée."""
+
+    def __init__(self, names=()):
+        self.devices = [{"name": n, "maxInputChannels": 2} for n in names]
+        self.terminated = False
+
+    def get_device_count(self):
+        return len(self.devices)
+
+    def get_device_info_by_index(self, i):
+        return self.devices[i]
+
+    def terminate(self):
+        self.terminated = True
+
+
+def test_rename_on_a_stale_path_is_reported_instead_of_crashing(qapp, tmp_path):
+    # La file a déjà renommé le fichier, mais `take_named` n'a pas encore été
+    # délivré : la ligne tient un chemin provisoire périmé. Un double-clic
+    # levait alors FileNotFoundError dans le fil graphique.
+    from datetime import datetime
+
+    import conteur.app as app_mod
+
+    when = datetime(2026, 9, 6, 14, 32, 8)
+    stale = tmp_path / "2026-09-06_143208_sans-nom.wav"   # jamais créé
+
+    win = MainWindow(find_rx=lambda: None, queue=None)
+    row = win.add_take(stale.name)
+    win._takes_meta.append((stale, when))
+
+    win.rename_take(row, "Le Loup Gris !")   # ne doit pas lever
+
+    assert app_mod.MISSING_FILE in win.status_label.text()
+    assert str(stale) in win.status_label.text()
+    assert win._takes_meta[row] == (stale, when)
+    assert row not in win._manually_renamed_rows
+    assert "manuel" not in win.take_text(row)
+
+
+def test_hot_plug_is_seen_only_after_the_audio_context_is_recreated(
+    qapp, monkeypatch,
+):
+    # PortAudio énumère les périphériques à Pa_Initialize() et PyAudio n'offre
+    # pas de rebalayage : sans recréer le contexte, le sondage relit
+    # indéfiniment l'instantané du démarrage et le branchement passe inaperçu.
+    import conteur.app as app_mod
+
+    monkeypatch.setattr(app_mod, "load_model", lambda: object())
+
+    contexts = [FakePa(["HDA Intel PCH"]),                      # toujours rien
+                FakePa(["HDA Intel PCH", "Wireless PRO RX"])]   # RX branché
+    made = []
+
+    def factory():
+        pa = contexts.pop(0)
+        made.append(pa)
+        return pa
+
+    first = FakePa(["HDA Intel PCH"])
+    win = MainWindow(pa=first, pa_factory=factory)
+
+    # Le contexte du démarrage ne voyait pas le RX ; il a été rendu.
+    assert first.terminated is True
+    assert win.record_button.isEnabled() is False
+
+    win.refresh_device()
+
+    assert win.record_button.isEnabled() is True
+    assert "Wireless PRO RX" in win.status_label.text()
+    assert made[0].terminated is True          # aucun contexte n'est laissé ouvert
+    assert win._pa is made[1]
+    assert win._pa.terminated is False
+
+
+def test_the_audio_context_is_never_recreated_during_a_capture(
+    qapp, tmp_path, monkeypatch,
+):
+    import threading
+
+    import numpy as np
+
+    import conteur.app as app_mod
+
+    release = threading.Event()
+
+    def blocking_record(pa, device, stop, on_block=None):
+        release.wait(2.0)
+        return np.array([1, 2, 3], dtype=np.int16)
+
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path)
+    monkeypatch.setattr(app_mod, "record", blocking_record)
+    monkeypatch.setattr(app_mod, "load_model", lambda: object())
+
+    calls = []
+
+    def factory():
+        calls.append(1)
+        return FakePa([])
+
+    found = [Dev()]
+    win = MainWindow(find_rx=lambda: found[0], queue=RecordingQueue(),
+                     pa=FakePa([]), pa_factory=factory)
+    win.toggle_recording()
+    found[0] = None
+
+    win.refresh_device()
+
+    # Recréer le contexte pendant la capture emporterait le flux ouvert.
+    assert calls == []
+    release.set()
+    win._capture.join(2.0)
+    win.refresh_device()
+
+
+def test_the_model_is_loaded_at_startup_and_off_the_gui_thread(qapp, monkeypatch):
+    import threading
+
+    import conteur.app as app_mod
+
+    loaded_in = []
+    model = object()
+
+    def slow_load():
+        loaded_in.append(threading.current_thread())
+        return model
+
+    monkeypatch.setattr(app_mod, "load_model", slow_load)
+
+    win = MainWindow(find_rx=lambda: Dev(), queue=RecordingQueue(), pa=object())
+    win._model_loader.join(5.0)
+
+    assert win._model is model                      # chargé sans aucune capture
+    assert loaded_in and loaded_in[0] is not threading.main_thread()
+
+
+def test_finish_capture_waits_for_the_model_but_never_loads_it_itself(
+    qapp, tmp_path, monkeypatch,
+):
+    import threading
+
+    import numpy as np
+
+    import conteur.app as app_mod
+
+    loaded_in = []
+
+    def slow_load():
+        loaded_in.append(threading.current_thread())
+        return object()
+
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path)
+    monkeypatch.setattr(
+        app_mod, "record",
+        lambda pa, device, stop, on_block=None: np.array([1, 2, 3], dtype=np.int16),
+    )
+    monkeypatch.setattr(app_mod, "load_model", slow_load)
+
+    queue = RecordingQueue()
+    win = MainWindow(find_rx=lambda: Dev(), queue=queue, pa=object())
+
+    win.toggle_recording()
+    win.toggle_recording()
+
+    assert len(loaded_in) == 1
+    assert loaded_in[0] is not threading.main_thread()
+    assert len(queue.submitted) == 1
+
+
+def test_two_takes_stopped_in_the_same_second_do_not_overwrite_each_other(
+    qapp, tmp_path, monkeypatch,
+):
+    import numpy as np
+
+    import conteur.app as app_mod
+    from conteur.naming import UNNAMED
+
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path)
+    monkeypatch.setattr(app_mod, "build_name",
+                        lambda when, slug: f"2026-09-06_143208_{slug}.wav")
+    monkeypatch.setattr(
+        app_mod, "record",
+        lambda pa, device, stop, on_block=None: np.array([1, 2, 3], dtype=np.int16),
+    )
+    monkeypatch.setattr(app_mod, "load_model", lambda: object())
+
+    queue = RecordingQueue()
+    win = MainWindow(find_rx=lambda: Dev(), queue=queue, pa=object())
+
+    for _ in range(2):
+        win.toggle_recording()
+        win.toggle_recording()
+
+    first, second = queue.submitted[0][0], queue.submitted[1][0]
+    assert first != second
+    assert first.exists() and second.exists()
+    assert UNNAMED in first.name
+    assert second.name == f"2026-09-06_143208_{UNNAMED}-2.wav"
+
+
+def test_closing_the_window_drains_the_queue_and_releases_portaudio(
+    qapp, monkeypatch,
+):
+    import conteur.app as app_mod
+
+    monkeypatch.setattr(app_mod, "load_model", lambda: object())
+
+    pa = FakePa(["Wireless PRO RX"])
+    queue = RecordingQueue()
+    win = MainWindow(find_rx=lambda: Dev(), queue=queue, pa=pa)
+
+    win.close()
+
+    # La file reçoit sa sentinelle après les travaux déjà en attente : ceux-ci
+    # ont le temps imparti pour aboutir plutôt que d'être jetés en silence.
+    assert queue.stopped is True
+    assert queue.joined == app_mod.SHUTDOWN_TIMEOUT_S
+    assert pa.terminated is True
+    assert win._poll.isActive() is False
+
+
+def test_closing_during_a_capture_still_writes_the_take(qapp, tmp_path, monkeypatch):
+    import numpy as np
+
+    import conteur.app as app_mod
+
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path)
+    monkeypatch.setattr(
+        app_mod, "record",
+        lambda pa, device, stop, on_block=None: np.array([1, 2, 3], dtype=np.int16),
+    )
+    monkeypatch.setattr(app_mod, "load_model", lambda: object())
+
+    queue = RecordingQueue()
+    win = MainWindow(find_rx=lambda: Dev(), queue=queue, pa=FakePa([]))
+
+    win.toggle_recording()
+    win.close()
+
+    assert len(queue.submitted) == 1
+    assert queue.submitted[0][0].exists()
+    assert queue.stopped is True
+
+
+def test_the_level_meter_survives_a_capture_with_no_block_yet(qapp):
+    from PySide6.QtTest import QTest
+
+    win = MainWindow(find_rx=lambda: None, queue=None)
+    win._last_block = None
+
+    win._refresh_level()                 # aucun bloc : rien à mesurer
+
+    assert win.level_bar.value() == win.level_bar.minimum()
+
+    # Et par le vrai minuteur, qui tourne dès le début de la capture, avant
+    # que le premier bloc ne soit arrivé.
+    win._level_timer.setInterval(5)
+    win._level_timer.start()
+    QTest.qWait(60)
+    win._level_timer.stop()
+    assert win.level_bar.value() == win.level_bar.minimum()
+
+
+def test_take_named_crosses_the_thread_boundary(qapp, tmp_path):
+    # La file de nommage vit dans un autre fil : le résultat n'atteint la
+    # ligne qu'au travers du signal, en connexion différée.
+    import threading
+    from datetime import datetime
+
+    from PySide6.QtTest import QTest
+
+    win = MainWindow(find_rx=lambda: None, queue=None)
+    row = win.add_take("2026-09-06_143208_sans-nom.wav")
+    win._takes_meta.append((tmp_path / "2026-09-06_143208_sans-nom.wav",
+                            datetime(2026, 9, 6, 14, 32, 8)))
+
+    done = threading.Event()
+
+    def emit():
+        win.take_named.emit(row, "2026-09-06_143208_le-loup.wav", "title")
+        done.set()
+
+    threading.Thread(target=emit, daemon=True).start()
+    assert done.wait(2.0)
+    QTest.qWait(50)
+
+    assert "le-loup" in win.take_text(row)
+    assert "titre généré" in win.take_text(row)
+    assert win._takes_meta[row][0].name == "2026-09-06_143208_le-loup.wav"

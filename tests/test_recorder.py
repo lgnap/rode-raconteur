@@ -75,3 +75,26 @@ def test_write_wav_roundtrip(tmp_path):
         assert w.getframerate() == 48000
         assert np.frombuffer(w.readframes(w.getnframes()),
                              dtype=np.int16).tolist() == samples.tolist()
+
+
+def test_record_keeps_audio_when_the_receiver_disappears():
+    # Le récepteur est débranché en cours de prise : la lecture lève, la boucle
+    # s'arrête, et ce qui a déjà été capté est conservé.
+    interleaved = np.array([1, -1, 2, -2], dtype=np.int16)
+    reads = []
+
+    def read_then_fail(_frames, exception_on_overflow=True):
+        if reads:
+            raise OSError("device disconnected")
+        reads.append(1)
+        return interleaved.tobytes()
+
+    stream = FakeStream([])
+    stream.read = read_then_fail
+    pa = FakePyAudio(stream)
+
+    # `stop` n'est jamais armé : seule l'erreur de lecture peut sortir de la boucle.
+    out = record(pa, RxDevice(0, "Wireless PRO RX"), threading.Event())
+
+    assert out.tolist() == [1, 2]
+    assert stream.closed is True

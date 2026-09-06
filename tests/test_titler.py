@@ -133,17 +133,12 @@ def test_timeout_covers_a_cold_ollama():
     assert TIMEOUT_S >= 45.0
 
 
-def test_warm_up_loads_the_model_out_of_the_critical_path():
-    from conteur.titler import warm_up
-
-    post = _post("ok")
-    assert warm_up(post=post) is True
-    assert post.seen.json["model"] == "qwen3:8b"
-    assert post.seen.json["stream"] is False
-    assert post.seen.timeout > TIMEOUT_S       # le chargement peut être long
 
 
-def test_warm_up_never_raises_when_ollama_is_absent():
-    from conteur.titler import warm_up
-
-    assert warm_up(post=_post(exc=OSError("connection refused"))) is False
+def test_the_title_request_releases_the_gpu_immediately():
+    """Mesuré : Whisper occupe 2033 Mio et qwen3:8b 5470 sur 8192. Les deux
+    tiennent au repos, mais pas pendant une transcription de plusieurs minutes.
+    Sans keep_alive=0, la suite échouait en « CUDA out of memory »."""
+    post = _post("Le loup")
+    title_from_ollama("texte", post=post)
+    assert post.seen.json["keep_alive"] == 0

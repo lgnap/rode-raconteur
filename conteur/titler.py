@@ -36,7 +36,6 @@ OLLAMA_MODEL = "qwen3:8b"
 # puis 0,7 s à chaud. Un délai de 20 s faisait donc systématiquement basculer le
 # premier titre de chaque session sur le repli mots-clés.
 TIMEOUT_S = 60.0
-WARM_UP_TIMEOUT_S = 120.0
 MAX_TITLE_LEN = 120
 
 PROMPT = (
@@ -68,6 +67,12 @@ def title_from_ollama(text: str, post=None, timeout_s: float = TIMEOUT_S) -> str
                 "prompt": PROMPT + text,
                 "stream": False,
                 "think": False,
+                # Rend la VRAM immédiatement : mesuré, Whisper occupe 2033 Mio
+                # et qwen3:8b 5470 sur 8192. Les deux tiennent au repos, mais
+                # les 690 Mio restants ne suffisent pas à l'espace de travail
+                # d'une transcription de plusieurs minutes — d'où des
+                # « CUDA out of memory » en série.
+                "keep_alive": 0,
             },
             timeout=timeout_s,
         )
@@ -83,26 +88,6 @@ def title_from_ollama(text: str, post=None, timeout_s: float = TIMEOUT_S) -> str
     ):
         return None
     return candidate
-
-
-def warm_up(post=None) -> bool:
-    """Charge le modèle de titrage en VRAM, hors du chemin critique.
-
-    Sans cela le premier titre d'une session attend le chargement (30 s mesurées)
-    et bascule sur le repli mots-clés. Ne lève jamais : Ollama absent est un cas
-    normal, le repli existe pour ça.
-    """
-    if post is None:
-        import requests
-
-        post = requests.post
-    try:
-        post(OLLAMA_URL,
-             json={"model": OLLAMA_MODEL, "prompt": "ok", "stream": False, "think": False},
-             timeout=WARM_UP_TIMEOUT_S)
-    except Exception:
-        return False
-    return True
 
 
 def make_title(text: str, post=None) -> str:

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import numpy as np
+import pytest
 
 from conteur.job import name_recording, rename_take
 from conteur.recorder import write_wav
@@ -146,3 +147,64 @@ def test_empty_capture_is_named_silence_not_failed(tmp_path):
     assert result.origin == "silence"
     assert result.path.exists()
     assert result.path.name == "2026-09-06_143208_silence.wav"
+
+
+# --- on n'écoute que le début pour nommer ---
+
+
+class RecordingModel:
+    """Doublure qui note la durée de ce qu'on lui donne à transcrire."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.durations = []
+
+    def transcribe(self, audio, **kwargs):
+        self.durations.append(len(audio) / 16000)
+        segs = self.replies.pop(0) if self.replies else []
+        return iter(segs), object()
+
+
+def test_only_the_head_is_transcribed(tmp_path):
+    """Transcrire une heure d'audio pour produire trois mots est un gâchis."""
+    import numpy as np
+
+    from conteur.job import NAMING_SAMPLE_S
+
+    long_take = np.zeros(48000 * 600, dtype=np.int16)      # 10 minutes
+    long_take[::7] = 8000                                  # sonore
+    path = _wav(tmp_path, long_take)
+    model = RecordingModel([[Seg(0.0, 30.0, "Il etait une fois")]])
+
+    name_recording(path, WHEN, model, title_fn=lambda t: ("La licorne", "title"))
+
+    assert len(model.durations) == 1
+    assert model.durations[0] == pytest.approx(NAMING_SAMPLE_S, abs=1.0)
+
+
+def test_a_silent_opening_gets_a_second_window(tmp_path):
+    """Une prise dont le début est muet garde sa chance."""
+    import numpy as np
+
+    long_take = np.zeros(48000 * 600, dtype=np.int16)
+    long_take[::7] = 8000
+    path = _wav(tmp_path, long_take)
+    model = RecordingModel([[], [Seg(0.0, 4.0, "Bonjour")]])
+
+    result = name_recording(path, WHEN, model, title_fn=lambda t: ("x", "title"))
+
+    assert len(model.durations) == 2
+    assert result.slug == "bonjour"
+
+
+def test_a_short_take_is_transcribed_whole(tmp_path):
+    import numpy as np
+
+    short = np.zeros(48000 * 5, dtype=np.int16)
+    short[::7] = 8000
+    path = _wav(tmp_path, short)
+    model = RecordingModel([[Seg(0.0, 4.0, "Bonjour")]])
+
+    name_recording(path, WHEN, model, title_fn=lambda t: ("x", "title"))
+
+    assert model.durations[0] == pytest.approx(5.0, abs=0.5)

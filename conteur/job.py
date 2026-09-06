@@ -12,7 +12,9 @@ from conteur.naming import (
     choose_name, slugify,
 )
 from conteur.paths import build_name, unique_path
-from conteur.signal import looks_like_timecode, rms_dbfs, to_whisper_input
+from conteur.signal import (
+    CAPTURE_RATE, looks_like_timecode, rms_dbfs, to_whisper_input,
+)
 from conteur.wavread import read_samples
 from conteur.titler import make_title_tracked
 from conteur.transcribe import transcribe
@@ -21,6 +23,12 @@ from conteur.transcribe import transcribe
 # Au-dessus de ce niveau RMS, un fichier est audible : s'il ne contient pas de
 # parole, ce n'est pas du silence.
 AUDIBLE_DBFS = -50.0
+
+# Pour nommer un fichier, il suffit d'en écouter le début : transcrire une heure
+# d'audio pour produire trois mots est un gâchis. Deux fenêtres au plus sont
+# examinées — la seconde ne sert qu'aux prises dont le début est muet.
+NAMING_SAMPLE_S = 180.0
+NAMING_WINDOWS = 2
 
 
 @dataclass(frozen=True)
@@ -43,6 +51,25 @@ def _renamed(wav_path: Path, when: datetime, slug: str, origin: str) -> NameResu
     return NameResult(path=target, slug=slug, origin=origin)
 
 
+def _transcribe_sample(model, samples) -> tuple[str, float]:
+    """Transcrit le début, et une seconde fenêtre seulement s'il est muet.
+
+    Nommer ne demande pas d'entendre tout le fichier : une histoire se
+    caractérise par son ouverture. Une prise dont les premières minutes sont
+    silencieuses garde toutefois sa chance avec une fenêtre suivante.
+    """
+    window = int(NAMING_SAMPLE_S * CAPTURE_RATE)
+    for index in range(NAMING_WINDOWS):
+        start = index * window
+        if start >= samples.size:
+            break
+        chunk = samples[start:start + window]
+        text, speech_s = transcribe(model, to_whisper_input(chunk))
+        if text.strip():
+            return text, speech_s
+    return "", 0.0
+
+
 def decide_name(samples, model, title_fn=make_title_tracked,
                 threshold_s: float = 12.0) -> tuple[str, str]:
     """Décide (slug, origine) pour un signal déjà lu. Sans I/O ni renommage.
@@ -58,7 +85,7 @@ def decide_name(samples, model, title_fn=make_title_tracked,
     if looks_like_timecode(samples):
         return ORIGIN_TIMECODE, ORIGIN_TIMECODE
 
-    text, speech_s = transcribe(model, to_whisper_input(samples))
+    text, speech_s = _transcribe_sample(model, samples)
 
     # `title_fn` rend (titre, origine) ; on capte l'origine au passage pour
     # distinguer un titre du modèle d'un repli sur mots-clés.

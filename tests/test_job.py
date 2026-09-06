@@ -165,28 +165,32 @@ class RecordingModel:
         return iter(segs), object()
 
 
-def test_only_the_head_is_transcribed(tmp_path):
-    """Transcrire une heure d'audio pour produire trois mots est un gâchis."""
-    import numpy as np
+def test_only_the_head_is_transcribed(tmp_path, monkeypatch):
+    """Transcrire une heure d'audio pour produire trois mots est un gâchis.
 
-    from conteur.job import NAMING_SAMPLE_S
+    Le plafond est réduit dans le test : ce qui est vérifié, c'est qu'il est
+    respecté, pas sa valeur du moment.
+    """
+    import conteur.job as job
 
-    long_take = np.zeros(48000 * 600, dtype=np.int16)      # 10 minutes
+    monkeypatch.setattr(job, "NAMING_SAMPLE_S", 30.0)
+    long_take = np.zeros(48000 * 120, dtype=np.int16)      # 2 minutes
     long_take[::7] = 8000                                  # sonore
     path = _wav(tmp_path, long_take)
-    model = RecordingModel([[Seg(0.0, 30.0, "Il etait une fois")]])
+    model = RecordingModel([[Seg(0.0, 20.0, "Il etait une fois")]])
 
     name_recording(path, WHEN, model, title_fn=lambda t: ("La licorne", "title"))
 
     assert len(model.durations) == 1
-    assert model.durations[0] == pytest.approx(NAMING_SAMPLE_S, abs=1.0)
+    assert model.durations[0] == pytest.approx(30.0, abs=1.0)
 
 
-def test_a_silent_opening_gets_a_second_window(tmp_path):
+def test_a_silent_opening_gets_a_second_window(tmp_path, monkeypatch):
     """Une prise dont le début est muet garde sa chance."""
-    import numpy as np
+    import conteur.job as job
 
-    long_take = np.zeros(48000 * 600, dtype=np.int16)
+    monkeypatch.setattr(job, "NAMING_SAMPLE_S", 30.0)
+    long_take = np.zeros(48000 * 120, dtype=np.int16)
     long_take[::7] = 8000
     path = _wav(tmp_path, long_take)
     model = RecordingModel([[], [Seg(0.0, 4.0, "Bonjour")]])

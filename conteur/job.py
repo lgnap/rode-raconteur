@@ -25,9 +25,11 @@ from conteur.transcribe import transcribe
 AUDIBLE_DBFS = -50.0
 
 # Pour nommer un fichier, il suffit d'en écouter le début : transcrire une heure
-# d'audio pour produire trois mots est un gâchis. Deux fenêtres au plus sont
-# examinées — la seconde ne sert qu'aux prises dont le début est muet.
-NAMING_SAMPLE_S = 180.0
+# d'audio pour produire trois mots est un gâchis. En deçà de ce plafond la prise
+# est transcrite en entier, ce qui donne de meilleures statistiques de mots-clés
+# et plus de contexte au titrage. Deux fenêtres au plus sont examinées — la
+# seconde ne sert qu'aux prises dont le début est muet.
+NAMING_SAMPLE_S = 900.0
 NAMING_WINDOWS = 2
 
 

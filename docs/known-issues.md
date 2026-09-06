@@ -4,6 +4,18 @@ Relevés à la revue finale de la branche `feat/enregistreur-vocal` (6 septembre
 arbitrés et laissés en l'état plutôt que corrigés. Aucun n'est bloquant ; chacun est
 documenté avec ce qu'il coûte et ce qu'il faudrait faire.
 
+## Écart assumé à la spec : les prises timecode sont renommées
+
+La spec dit qu'une prise refusée par le garde-fou timecode est « conservée sous son
+nom provisoire ». Elle est désormais renommée `<horodatage>_timecode.wav`.
+
+Sans ce renommage, le rattrapage des orphelins la redétecterait à **chaque**
+lancement, indéfiniment, puisque `sans-nom` est précisément ce qu'il cherche. Le nom
+retenu dit en outre pourquoi la prise n'a pas été transcrite, ce que le nom provisoire
+ne disait pas.
+
+L'audio est conservé dans les deux cas ; seule l'étiquette change.
+
 ## Bibliothèques CUDA et repli CPU
 
 Sur cette machine, CUDA vient des paquets pip `nvidia-cublas-cu12` et

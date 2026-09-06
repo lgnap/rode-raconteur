@@ -51,7 +51,10 @@ def name_recording(
         return _renamed(wav_path, when, SILENCE, ORIGIN_SILENCE)
 
     if looks_like_timecode(samples):
-        return NameResult(path=wav_path, slug=wav_path.stem, origin=ORIGIN_TIMECODE)
+        # Renommée plutôt que laissée sous son nom provisoire : sinon la prise
+        # serait redétectée comme orpheline à chaque lancement, indéfiniment.
+        # Le nom dit aussi pourquoi elle n'a pas été transcrite.
+        return _renamed(wav_path, when, ORIGIN_TIMECODE, ORIGIN_TIMECODE)
 
     text, speech_s = transcribe(model, to_whisper_input(samples))
 

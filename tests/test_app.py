@@ -870,3 +870,69 @@ def test_status_is_clean_once_the_model_is_ready(qapp):
     win._model = object()
     win.refresh_device()
     assert win.status_label.text() == "Wireless PRO RX"
+
+
+# --- rattrapage des prises orphelines ---
+
+
+def _orphan(directory, stamp="2026-09-06_162542"):
+    import numpy as np
+
+    from conteur.recorder import write_wav
+
+    path = directory / f"{stamp}_sans-nom.wav"
+    write_wav(np.array([1, 2, 3], dtype=np.int16), path)
+    return path
+
+
+def test_orphans_are_queued_at_startup(qapp, tmp_path):
+    class Dev:
+        index = 0
+        name = "Wireless PRO RX"
+
+    class FakeQueue:
+        def __init__(self):
+            self.submitted = []
+
+        def start(self):
+            pass
+
+        def submit(self, path, when, on_done):
+            self.submitted.append((path, when))
+
+    old = _orphan(tmp_path, "2026-08-31_235959")
+    recent = _orphan(tmp_path, "2026-09-06_162542")
+    queue = FakeQueue()
+    win = MainWindow(find_rx=lambda: Dev(), queue=queue, orphan_root=tmp_path)
+
+    assert win.recover_orphans() == 2
+    # Chronologique : la prise la plus ancienne est reprise en premier.
+    assert [p for p, _ in queue.submitted] == [old, recent]
+    assert win.take_text(0).startswith(old.name)
+
+
+def test_already_named_takes_are_left_alone(qapp, tmp_path):
+    import numpy as np
+
+    from conteur.recorder import write_wav
+
+    write_wav(np.array([1], dtype=np.int16), tmp_path / "2026-09-06_162542_le-loup.wav")
+    win = MainWindow(find_rx=lambda: None, queue=None, orphan_root=tmp_path)
+    assert win.recover_orphans() == 0
+
+
+def test_a_recovered_orphan_can_be_renamed_by_hand(qapp, tmp_path):
+    class FakeQueue:
+        def start(self):
+            pass
+
+        def submit(self, path, when, on_done):
+            pass
+
+    path = _orphan(tmp_path)
+    win = MainWindow(find_rx=lambda: None, queue=FakeQueue(), orphan_root=tmp_path)
+    win.recover_orphans()
+    # _takes_meta doit être alimenté, sinon le renommage manuel lèverait.
+    win.rename_take(0, "Le loup gris")
+    assert (tmp_path / "2026-09-06_162542_le-loup-gris.wav").exists()
+    assert not path.exists()

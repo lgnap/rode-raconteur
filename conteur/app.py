@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
 from conteur.job import name_recording
 from conteur.job import rename_take as rename_take_file
 from conteur.naming import ORIGIN_FAILED, ORIGIN_MANUAL, UNNAMED, origin_label
-from conteur.paths import build_name, destination_dir, unique_path
+from conteur.orphans import find_orphans
+from conteur.paths import FOLDER, build_name, destination_dir, music_dir, unique_path
 from conteur.recorder import record, write_wav
 from conteur.rx_device import find_rx as default_find_rx
 from conteur.signal import DBFS_FLOOR, rms_dbfs
@@ -66,13 +67,15 @@ class MainWindow(QMainWindow):
     take_named = Signal(int, str, str)
     naming_failed = Signal(str, str)
 
-    def __init__(self, find_rx=None, queue=None, pa=None, pa_factory=None):
+    def __init__(self, find_rx=None, queue=None, pa=None, pa_factory=None,
+                 orphan_root=None):
         super().__init__()
         self._pa = pa
         # PortAudio fige la liste des périphériques à Pa_Initialize() et
         # PyAudio n'offre aucun rebalayage : sans fabrique pour recréer le
         # contexte, le sondage relirait indéfiniment l'instantané du démarrage.
         self._pa_factory = pa_factory
+        self._orphan_root = orphan_root
         self._find_rx = find_rx or self._find_rx_via_pa
         self._queue = queue
         self._stop = threading.Event()
@@ -159,6 +162,40 @@ class MainWindow(QMainWindow):
             self._set_status(f"{AUDIO_UNAVAILABLE} : {error}", sticky=True)
             return None
         return self._find_rx()
+
+    def _ensure_queue(self, runner) -> None:
+        if self._queue is None:
+            self._queue = NamingQueue(runner)
+            self._queue.start()
+
+    def _naming_runner(self, path: Path, at: datetime):
+        return name_recording(path, at, self._await_model())
+
+    def recover_orphans(self, root=None) -> int:
+        """Remet en file les prises restées sans nom d'une session précédente.
+
+        Sans ce rattrapage, un nommage interrompu — modèle indisponible,
+        application tuée — laisserait le fichier `sans-nom` pour toujours.
+        Rend le nombre de prises reprises.
+        """
+        root = Path(root if root is not None else self._orphan_root or "")
+        taken = 0
+        for path, when in find_orphans(root):
+            row = self.add_take(path.name)
+            self._takes_meta.append((path, when))
+
+            def on_done(_src, result, error=None, row=row, path=path):
+                if result is None:
+                    self.take_named.emit(row, path.name, ORIGIN_FAILED)
+                    if error is not None:
+                        self.naming_failed.emit(path.name, describe_error(error))
+                else:
+                    self.take_named.emit(row, result.path.name, result.origin)
+
+            self._ensure_queue(self._naming_runner)
+            self._queue.submit(path, when, on_done)
+            taken += 1
+        return taken
 
     def _start_model_loading(self) -> None:
         if self._model_loader is not None:
@@ -383,9 +420,7 @@ class MainWindow(QMainWindow):
             else:
                 self.take_named.emit(row, result.path.name, result.origin)
 
-        if self._queue is None:
-            self._queue = NamingQueue(runner)
-            self._queue.start()
+        self._ensure_queue(runner)
         self._queue.submit(provisional, when, on_done)
 
     def shutdown(self, timeout_s: float = SHUTDOWN_TIMEOUT_S) -> None:
@@ -421,10 +456,15 @@ def main() -> int:
     import pyaudio
 
     app = QApplication(sys.argv)
-    window = MainWindow(pa=pyaudio.PyAudio(), pa_factory=pyaudio.PyAudio)
+    window = MainWindow(
+        pa=pyaudio.PyAudio(),
+        pa_factory=pyaudio.PyAudio,
+        orphan_root=music_dir() / FOLDER,
+    )
     window.resize(560, 420)
     window.show()
     interrupt_timer = install_interrupt_handler(app)  # noqa: F841 - garde la référence
+    window.recover_orphans()
     try:
         return app.exec()
     finally:

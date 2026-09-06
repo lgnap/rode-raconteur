@@ -84,8 +84,11 @@ def test_timecode_channel_is_refused_and_file_kept(tmp_path):
     result = name_recording(path, WHEN, FakeModel([Seg(0.0, 4.0, "bruit")]),
                             title_fn=lambda t: ("x", "title"))
     assert result.origin == "timecode"
-    assert result.path == path
-    assert path.exists()
+    # Renommée, pas laissée sous son nom provisoire : sinon elle serait
+    # redétectée comme orpheline à chaque lancement. L'audio est conservé.
+    assert result.path.name == "2026-09-06_143208_timecode.wav"
+    assert result.path.exists()
+    assert not path.exists()
 
 
 def test_collision_gets_a_suffix(tmp_path):

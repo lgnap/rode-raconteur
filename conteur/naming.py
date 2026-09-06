@@ -22,6 +22,7 @@ def slugify(text: str, max_len: int = 60) -> str:
 
 
 SILENCE = "silence"
+NO_SPEECH = "sans-parole"
 UNNAMED = "sans-nom"
 
 # Origine du nom d'une prise. Les jetons sont internes et stables : ils
@@ -33,11 +34,13 @@ ORIGIN_TITLE = "title"
 ORIGIN_KEYWORDS = "keywords"
 ORIGIN_TIMECODE = "timecode"
 ORIGIN_SILENCE = SILENCE
+ORIGIN_NO_SPEECH = NO_SPEECH
 ORIGIN_FAILED = "echec"
 ORIGIN_MANUAL = "manuel"
 
 ORIGIN_LABELS = {
     ORIGIN_TRANSCRIPT: "transcription",
+    ORIGIN_NO_SPEECH: "aucune parole",
     ORIGIN_TITLE: "titre généré",
     ORIGIN_KEYWORDS: "mots-clés",
     ORIGIN_TIMECODE: "canal timecode",

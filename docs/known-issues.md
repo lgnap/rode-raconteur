@@ -4,6 +4,52 @@ Relevés à la revue finale de la branche `feat/enregistreur-vocal` (6 septembre
 arbitrés et laissés en l'état plutôt que corrigés. Aucun n'est bloquant ; chacun est
 documenté avec ce qu'il coûte et ce qu'il faudrait faire.
 
+## Détection de parole : seuil VAD abaissé, et « silence » restreint
+
+Le seuil Silero par défaut (0.5) rejetait des prises courtes pourtant sonores.
+Mesuré sur du matériel réel : huit fichiers culminant entre −0,1 et −1,0 dBFS,
+avec un RMS entre −20 et −31 dBFS, ont été nommés `silence`. Le seuil est abaissé à
+**0.2**, ce qui en récupère une partie.
+
+Le reste ne rend rien même sans VAD — ou seulement des hallucinations de Whisper,
+du type « Merci d'avoir regardé cette vidéo ! » sur du non-verbal. Ces prises sont
+désormais nommées **`sans-parole`** et non `silence` : un fichier à −30 dBFS n'est
+pas silencieux, il est audible sans parole reconnue. `silence` est réservé aux
+fichiers réellement muets, sous −50 dBFS RMS.
+
+Conséquence à connaître : un enregistrement de bruit, de musique ou de sons non
+verbaux sera nommé `sans-parole`. C'est voulu — un nom inventé par hallucination
+serait pire qu'un nom générique honnête.
+
+## Écart assumé à la spec : les prises timecode sont renommées
+
+La spec dit qu'une prise refusée par le garde-fou timecode est « conservée sous son
+nom provisoire ». Elle est désormais renommée `<horodatage>_timecode.wav`.
+
+Sans ce renommage, le rattrapage des orphelins la redétecterait à **chaque**
+lancement, indéfiniment, puisque `sans-nom` est précisément ce qu'il cherche. Le nom
+retenu dit en outre pourquoi la prise n'a pas été transcrite, ce que le nom provisoire
+ne disait pas.
+
+L'audio est conservé dans les deux cas ; seule l'étiquette change.
+
+## Bibliothèques CUDA et repli CPU
+
+Sur cette machine, CUDA vient des paquets pip `nvidia-cublas-cu12` et
+`nvidia-cudnn-cu12` plutôt que de la distribution, et leurs `.so` ne sont pas sur le
+chemin de l'éditeur de liens. CTranslate2 ouvre `libcublas.so.12` par `dlopen` au
+**premier encodage**, pas au chargement du modèle : un GPU visible et un modèle chargé
+sans erreur ne garantissent donc rien.
+
+`conteur/cuda.py` précharge ces bibliothèques en `RTLD_GLOBAL` avant de construire le
+modèle. `LD_LIBRARY_PATH` ne conviendrait pas : il est lu au démarrage du processus,
+trop tard pour être corrigé depuis Python.
+
+Si cuBLAS reste introuvable, le modèle est construit sur **CPU** en `int8` au lieu
+d'échouer en pleine transcription. C'est plus lent — acceptable sur des fragments
+courts, sensible sur un récit de plusieurs minutes. `chosen_device()` dit ce qui a été
+retenu.
+
 ## Fermeture : deux attentes non bornées
 
 `app.py` — `shutdown()` appelle `_finish_capture`, qui fait `self._capture.join()`

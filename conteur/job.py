@@ -8,13 +8,19 @@ from pathlib import Path
 import numpy as np
 
 from conteur.naming import (
-    ORIGIN_SILENCE, ORIGIN_TIMECODE, ORIGIN_TRANSCRIPT, SILENCE,
+    NO_SPEECH, ORIGIN_NO_SPEECH, ORIGIN_SILENCE, ORIGIN_TIMECODE,
+    ORIGIN_TRANSCRIPT, SILENCE,
     choose_name, slugify,
 )
 from conteur.paths import build_name, unique_path
-from conteur.signal import looks_like_timecode, to_whisper_input
+from conteur.signal import looks_like_timecode, rms_dbfs, to_whisper_input
 from conteur.titler import make_title_tracked
 from conteur.transcribe import transcribe
+
+
+# Au-dessus de ce niveau RMS, un fichier est audible : s'il ne contient pas de
+# parole, ce n'est pas du silence.
+AUDIBLE_DBFS = -50.0
 
 
 @dataclass(frozen=True)
@@ -51,7 +57,10 @@ def name_recording(
         return _renamed(wav_path, when, SILENCE, ORIGIN_SILENCE)
 
     if looks_like_timecode(samples):
-        return NameResult(path=wav_path, slug=wav_path.stem, origin=ORIGIN_TIMECODE)
+        # Renommée plutôt que laissée sous son nom provisoire : sinon la prise
+        # serait redétectée comme orpheline à chaque lancement, indéfiniment.
+        # Le nom dit aussi pourquoi elle n'a pas été transcrite.
+        return _renamed(wav_path, when, ORIGIN_TIMECODE, ORIGIN_TIMECODE)
 
     text, speech_s = transcribe(model, to_whisper_input(samples))
 
@@ -66,6 +75,12 @@ def name_recording(
 
     slug = choose_name(text, speech_s, make_title, threshold_s=threshold_s)
     origin = ORIGIN_SILENCE if slug == SILENCE else seen_origin
+
+    if slug == SILENCE and rms_dbfs(samples) > AUDIBLE_DBFS:
+        # Sonore mais sans parole reconnue : l'appeler « silence » serait faux.
+        # Mesuré sur du matériel réel : des prises culminant à -0,1 dBFS étaient
+        # nommées silence parce que le VAD n'y trouvait pas de parole.
+        slug, origin = NO_SPEECH, ORIGIN_NO_SPEECH
 
     return _renamed(wav_path, when, slug, origin)
 

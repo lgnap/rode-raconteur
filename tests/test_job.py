@@ -70,11 +70,23 @@ def test_keyword_fallback_is_reported_as_such(tmp_path):
     assert result.path.name == "2026-09-06_143208_loup-chevreaux.wav"
 
 
-def test_silence_keeps_the_audio_and_is_marked(tmp_path):
-    path = _wav(tmp_path, _voice())
+def test_audible_without_speech_is_not_called_silence(tmp_path):
+    """Mesuré sur du matériel réel : des prises culminant à -0,1 dBFS étaient
+    nommées « silence » parce que le VAD n'y trouvait pas de parole."""
+    path = _wav(tmp_path, _voice())          # bruit fort, aucune parole reconnue
     result = name_recording(path, WHEN, FakeModel([]),
                             title_fn=lambda t: ("x", "title"))
-    assert result.slug == "silence"
+    assert result.slug == "sans-parole"
+    assert result.origin == "sans-parole"
+    assert result.path.exists()
+
+
+def test_true_silence_is_still_called_silence(tmp_path):
+    import numpy as np
+
+    path = _wav(tmp_path, np.zeros(48000, dtype=np.int16))
+    result = name_recording(path, WHEN, FakeModel([]),
+                            title_fn=lambda t: ("x", "title"))
     assert result.origin == "silence"
     assert result.path.exists()
 
@@ -84,8 +96,11 @@ def test_timecode_channel_is_refused_and_file_kept(tmp_path):
     result = name_recording(path, WHEN, FakeModel([Seg(0.0, 4.0, "bruit")]),
                             title_fn=lambda t: ("x", "title"))
     assert result.origin == "timecode"
-    assert result.path == path
-    assert path.exists()
+    # Renommée, pas laissée sous son nom provisoire : sinon elle serait
+    # redétectée comme orpheline à chaque lancement. L'audio est conservé.
+    assert result.path.name == "2026-09-06_143208_timecode.wav"
+    assert result.path.exists()
+    assert not path.exists()
 
 
 def test_collision_gets_a_suffix(tmp_path):
@@ -128,7 +143,6 @@ def test_empty_capture_is_named_silence_not_failed(tmp_path):
     path = _wav(tmp_path, np.zeros(0, dtype=np.int16))
     result = name_recording(path, WHEN, FakeModel([]),
                             title_fn=lambda t: ("x", "title"))
-    assert result.slug == "silence"
     assert result.origin == "silence"
     assert result.path.exists()
     assert result.path.name == "2026-09-06_143208_silence.wav"

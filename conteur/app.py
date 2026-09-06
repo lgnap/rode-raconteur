@@ -1,5 +1,6 @@
 """Fenêtre unique. Toute la logique vit ailleurs ; ce module ne fait que l'UI."""
 
+import signal as stdlib_signal
 import sys
 import threading
 from datetime import datetime
@@ -14,16 +15,18 @@ from PySide6.QtWidgets import (
 from conteur.job import name_recording
 from conteur.job import rename_take as rename_take_file
 from conteur.naming import ORIGIN_FAILED, ORIGIN_MANUAL, UNNAMED, origin_label
-from conteur.paths import build_name, destination_dir, unique_path
+from conteur.orphans import find_orphans
+from conteur.paths import FOLDER, build_name, destination_dir, music_dir, unique_path
 from conteur.recorder import record, write_wav
 from conteur.rx_device import find_rx as default_find_rx
 from conteur.signal import DBFS_FLOOR, rms_dbfs
-from conteur.transcribe import load_model
+from conteur.transcribe import chosen_device, load_model
 from conteur.worker import NamingQueue
 
 NO_DEVICE = "Branche le Wireless PRO RX pour enregistrer."
 RX_LOST = "Récepteur débranché — la prise en cours est incomplète."
 CAPTURE_FAILED = "Capture impossible"
+MODEL_LOADING = "Chargement du modèle de transcription…"
 MODEL_FAILED = "Modèle de transcription indisponible"
 AUDIO_UNAVAILABLE = "Sous-système audio indisponible"
 MISSING_FILE = "Fichier introuvable"
@@ -34,16 +37,45 @@ INCOMPLETE = "incomplet"
 PENDING = "transcription…"
 
 
+def install_interrupt_handler(app, interval_ms: int = 200):
+    """Fait de Ctrl+C un arrêt propre, comme la fermeture de la fenêtre.
+
+    Qt exécute sa boucle en C++ ; un gestionnaire de signal Python ne tourne
+    qu'entre deux bytecodes du fil principal, et n'est donc jamais atteint tant
+    que la boucle est en cours. Le minuteur inerte rend périodiquement la main à
+    l'interpréteur, ce qui laisse le gestionnaire s'exécuter.
+    """
+    stdlib_signal.signal(stdlib_signal.SIGINT, lambda *_: app.quit())
+    timer = QTimer()
+    timer.timeout.connect(lambda: None)
+    timer.start(interval_ms)
+    return timer
+
+
+def describe_error(error: BaseException) -> str:
+    """Rend une cause lisible, en traduisant les échecs connus les plus opaques."""
+    text = str(error).strip() or error.__class__.__name__
+    if "cublas" in text.lower() or "cudnn" in text.lower():
+        return (
+            "bibliothèques CUDA introuvables, transcription impossible "
+            "(voir docs/known-issues.md)"
+        )
+    return f"{error.__class__.__name__} : {text}"
+
+
 class MainWindow(QMainWindow):
     take_named = Signal(int, str, str)
+    naming_failed = Signal(str, str)
 
-    def __init__(self, find_rx=None, queue=None, pa=None, pa_factory=None):
+    def __init__(self, find_rx=None, queue=None, pa=None, pa_factory=None,
+                 orphan_root=None):
         super().__init__()
         self._pa = pa
         # PortAudio fige la liste des périphériques à Pa_Initialize() et
         # PyAudio n'offre aucun rebalayage : sans fabrique pour recréer le
         # contexte, le sondage relirait indéfiniment l'instantané du démarrage.
         self._pa_factory = pa_factory
+        self._orphan_root = orphan_root
         self._find_rx = find_rx or self._find_rx_via_pa
         self._queue = queue
         self._stop = threading.Event()
@@ -95,6 +127,7 @@ class MainWindow(QMainWindow):
         self._level_timer.timeout.connect(self._refresh_level)
 
         self.take_named.connect(self._apply_name)
+        self.naming_failed.connect(self.report_naming_error)
         self._poll = QTimer(self)
         self._poll.timeout.connect(self.refresh_device)
         self._poll.start(POLL_MS)
@@ -129,6 +162,40 @@ class MainWindow(QMainWindow):
             self._set_status(f"{AUDIO_UNAVAILABLE} : {error}", sticky=True)
             return None
         return self._find_rx()
+
+    def _ensure_queue(self, runner) -> None:
+        if self._queue is None:
+            self._queue = NamingQueue(runner)
+            self._queue.start()
+
+    def _naming_runner(self, path: Path, at: datetime):
+        return name_recording(path, at, self._await_model())
+
+    def recover_orphans(self, root=None) -> int:
+        """Remet en file les prises restées sans nom d'une session précédente.
+
+        Sans ce rattrapage, un nommage interrompu — modèle indisponible,
+        application tuée — laisserait le fichier `sans-nom` pour toujours.
+        Rend le nombre de prises reprises.
+        """
+        root = Path(root if root is not None else self._orphan_root or "")
+        taken = 0
+        for path, when in find_orphans(root):
+            row = self.add_take(path.name)
+            self._takes_meta.append((path, when))
+
+            def on_done(_src, result, error=None, row=row, path=path):
+                if result is None:
+                    self.take_named.emit(row, path.name, ORIGIN_FAILED)
+                    if error is not None:
+                        self.naming_failed.emit(path.name, describe_error(error))
+                else:
+                    self.take_named.emit(row, result.path.name, result.origin)
+
+            self._ensure_queue(self._naming_runner)
+            self._queue.submit(path, when, on_done)
+            taken += 1
+        return taken
 
     def _start_model_loading(self) -> None:
         if self._model_loader is not None:
@@ -167,7 +234,20 @@ class MainWindow(QMainWindow):
         if device is None:
             device = self._rescan_devices()
         self.record_button.setEnabled(device is not None)
-        self._set_status(device.name if device else NO_DEVICE)
+        self._set_status((device.name if device else NO_DEVICE) + self._model_suffix())
+
+    def _model_suffix(self) -> str:
+        """Dit où en est le modèle, sans masquer l'état du périphérique.
+
+        Calculé ici plutôt qu'émis depuis le fil de chargement : un signal
+        traversant la frontière de fil vers une fenêtre déjà détruite plante
+        le processus.
+        """
+        if self._model_error is not None:
+            return f" — {MODEL_FAILED}"
+        if self._model_loader is not None and self._model is None:
+            return f" — {MODEL_LOADING}"
+        return ""
 
     def _set_status(self, text: str, sticky: bool = False) -> None:
         """Affiche un état. Un message collant survit aux sondages suivants."""
@@ -220,6 +300,10 @@ class MainWindow(QMainWindow):
         # Rien à afficher avant l'arrivée du premier bloc.
         if self._last_block is not None:
             self.set_level(self._last_block)
+
+    def report_naming_error(self, filename: str, reason: str) -> None:
+        """Affiche pourquoi le nommage a échoué, pas seulement qu'il a échoué."""
+        self._set_status(f"Nommage impossible pour {filename} : {reason}", sticky=True)
 
     def report_write_error(self, path, error) -> None:
         self._set_status(f"Écriture impossible dans {path} : {error}", sticky=True)
@@ -326,15 +410,17 @@ class MainWindow(QMainWindow):
         def runner(path: Path, at: datetime):
             return name_recording(path, at, self._model)
 
-        def on_done(_src, result):
+        def on_done(_src, result, error=None):
             if result is None:
                 self.take_named.emit(row, provisional.name, ORIGIN_FAILED)
+                if error is not None:
+                    # Sans ceci l'utilisateur voit "échec" sans jamais pouvoir
+                    # en connaître la cause : il faut rejouer la chaîne à la main.
+                    self.naming_failed.emit(provisional.name, describe_error(error))
             else:
                 self.take_named.emit(row, result.path.name, result.origin)
 
-        if self._queue is None:
-            self._queue = NamingQueue(runner)
-            self._queue.start()
+        self._ensure_queue(runner)
         self._queue.submit(provisional, when, on_done)
 
     def shutdown(self, timeout_s: float = SHUTDOWN_TIMEOUT_S) -> None:
@@ -370,9 +456,15 @@ def main() -> int:
     import pyaudio
 
     app = QApplication(sys.argv)
-    window = MainWindow(pa=pyaudio.PyAudio(), pa_factory=pyaudio.PyAudio)
+    window = MainWindow(
+        pa=pyaudio.PyAudio(),
+        pa_factory=pyaudio.PyAudio,
+        orphan_root=music_dir() / FOLDER,
+    )
     window.resize(560, 420)
     window.show()
+    interrupt_timer = install_interrupt_handler(app)  # noqa: F841 - garde la référence
+    window.recover_orphans()
     try:
         return app.exec()
     finally:

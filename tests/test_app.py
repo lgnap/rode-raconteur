@@ -773,3 +773,166 @@ def test_take_named_crosses_the_thread_boundary(qapp, tmp_path):
     assert "le-loup" in win.take_text(row)
     assert "titre généré" in win.take_text(row)
     assert win._takes_meta[row][0].name == "2026-09-06_143208_le-loup.wav"
+
+
+# --- remontée de la cause d'un échec de nommage ---
+
+
+def test_describe_error_translates_the_cublas_failure():
+    from conteur.app import describe_error
+
+    reason = describe_error(RuntimeError("Library libcublas.so.12 is not found"))
+    assert "CUDA" in reason
+    assert "libcublas" not in reason          # l'utilisateur n'a pas à décoder ça
+
+
+def test_describe_error_keeps_an_unknown_cause_intact():
+    from conteur.app import describe_error
+
+    assert describe_error(ValueError("disque plein")) == "ValueError : disque plein"
+
+
+def test_naming_failure_reason_is_shown_and_survives_the_device_poll(qapp):
+    class Dev:
+        index = 0
+        name = "Wireless PRO RX"
+
+    win = MainWindow(find_rx=lambda: Dev(), queue=None)
+    win.report_naming_error("2026-09-06_162855_sans-nom.wav", "bibliothèques CUDA introuvables")
+    assert "2026-09-06_162855_sans-nom.wav" in win.status_label.text()
+    assert "CUDA" in win.status_label.text()
+
+    # Le sondage périphérique ne doit pas effacer la cause.
+    win.refresh_device()
+    assert "CUDA" in win.status_label.text()
+
+
+# --- Ctrl+C et retour visuel du chargement ---
+
+
+def test_ctrl_c_asks_the_application_to_quit(qapp):
+    """Qt tourne en C++ : sans minuteur rendant la main à l'interpréteur, le
+    gestionnaire Python ne s'exécute jamais et Ctrl+C reste sans effet."""
+    import signal as sig
+
+    from conteur.app import install_interrupt_handler
+
+    class FakeApp:
+        def __init__(self):
+            self.quit_called = False
+
+        def quit(self):
+            self.quit_called = True
+
+    fake = FakeApp()
+    previous = sig.getsignal(sig.SIGINT)
+    try:
+        timer = install_interrupt_handler(fake, interval_ms=50)
+        assert timer.isActive() is True
+        sig.raise_signal(sig.SIGINT)
+        assert fake.quit_called is True
+    finally:
+        sig.signal(sig.SIGINT, previous)
+
+
+def test_status_says_the_model_is_still_loading_without_hiding_the_device(qapp):
+    class Dev:
+        index = 0
+        name = "Wireless PRO RX"
+
+    win = MainWindow(find_rx=lambda: Dev(), queue=None)
+    win._model_loader = object()      # chargement en cours
+    win._model = None
+    win.refresh_device()
+    assert "Wireless PRO RX" in win.status_label.text()
+    assert "Chargement" in win.status_label.text()
+
+
+def test_status_reports_a_model_that_failed_to_load(qapp):
+    class Dev:
+        index = 0
+        name = "Wireless PRO RX"
+
+    win = MainWindow(find_rx=lambda: Dev(), queue=None)
+    win._model_error = RuntimeError("libcublas absent")
+    win.refresh_device()
+    assert "Wireless PRO RX" in win.status_label.text()
+    assert "indisponible" in win.status_label.text()
+
+
+def test_status_is_clean_once_the_model_is_ready(qapp):
+    class Dev:
+        index = 0
+        name = "Wireless PRO RX"
+
+    win = MainWindow(find_rx=lambda: Dev(), queue=None)
+    win._model_loader = object()
+    win._model = object()
+    win.refresh_device()
+    assert win.status_label.text() == "Wireless PRO RX"
+
+
+# --- rattrapage des prises orphelines ---
+
+
+def _orphan(directory, stamp="2026-09-06_162542"):
+    import numpy as np
+
+    from conteur.recorder import write_wav
+
+    path = directory / f"{stamp}_sans-nom.wav"
+    write_wav(np.array([1, 2, 3], dtype=np.int16), path)
+    return path
+
+
+def test_orphans_are_queued_at_startup(qapp, tmp_path):
+    class Dev:
+        index = 0
+        name = "Wireless PRO RX"
+
+    class FakeQueue:
+        def __init__(self):
+            self.submitted = []
+
+        def start(self):
+            pass
+
+        def submit(self, path, when, on_done):
+            self.submitted.append((path, when))
+
+    old = _orphan(tmp_path, "2026-08-31_235959")
+    recent = _orphan(tmp_path, "2026-09-06_162542")
+    queue = FakeQueue()
+    win = MainWindow(find_rx=lambda: Dev(), queue=queue, orphan_root=tmp_path)
+
+    assert win.recover_orphans() == 2
+    # Chronologique : la prise la plus ancienne est reprise en premier.
+    assert [p for p, _ in queue.submitted] == [old, recent]
+    assert win.take_text(0).startswith(old.name)
+
+
+def test_already_named_takes_are_left_alone(qapp, tmp_path):
+    import numpy as np
+
+    from conteur.recorder import write_wav
+
+    write_wav(np.array([1], dtype=np.int16), tmp_path / "2026-09-06_162542_le-loup.wav")
+    win = MainWindow(find_rx=lambda: None, queue=None, orphan_root=tmp_path)
+    assert win.recover_orphans() == 0
+
+
+def test_a_recovered_orphan_can_be_renamed_by_hand(qapp, tmp_path):
+    class FakeQueue:
+        def start(self):
+            pass
+
+        def submit(self, path, when, on_done):
+            pass
+
+    path = _orphan(tmp_path)
+    win = MainWindow(find_rx=lambda: None, queue=FakeQueue(), orphan_root=tmp_path)
+    win.recover_orphans()
+    # _takes_meta doit être alimenté, sinon le renommage manuel lèverait.
+    win.rename_take(0, "Le loup gris")
+    assert (tmp_path / "2026-09-06_162542_le-loup-gris.wav").exists()
+    assert not path.exists()

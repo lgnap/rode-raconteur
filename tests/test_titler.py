@@ -105,3 +105,18 @@ def test_make_title_tracked_reports_its_source():
     fallback, origin = make_title_tracked(text, post=_post(exc=OSError("down")))
     assert origin == "keywords"
     assert "loup" in fallback
+
+
+def test_unclosed_think_block_is_rejected():
+    # Bloc de raisonnement tronqué : court, sans saut de ligne, il franchirait
+    # les trois autres gardes.
+    assert title_from_ollama("texte", post=_post("<think>raisonnement tronque")) is None
+
+
+def test_unclosed_think_block_falls_back_to_keywords():
+    from conteur.titler import make_title_tracked
+
+    text = "Le loup et les chevreaux. Le loup mange les chevreaux."
+    title, origin = make_title_tracked(text, post=_post("<think>tronque"))
+    assert origin == "keywords"
+    assert "loup" in title

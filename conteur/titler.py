@@ -69,7 +69,12 @@ def title_from_ollama(text: str, post=None, timeout_s: float = TIMEOUT_S) -> str
         candidate = strip_think(response.json().get("response", ""))
     except Exception:
         return None
-    if not candidate or "\n" in candidate or len(candidate) > MAX_TITLE_LEN:
+    if (
+        not candidate
+        or "<think" in candidate
+        or "\n" in candidate
+        or len(candidate) > MAX_TITLE_LEN
+    ):
         return None
     return candidate
 

@@ -29,7 +29,7 @@ AUDIBLE_DBFS = -50.0
 # est transcrite en entier, ce qui donne de meilleures statistiques de mots-clés
 # et plus de contexte au titrage. Deux fenêtres au plus sont examinées — la
 # seconde ne sert qu'aux prises dont le début est muet.
-NAMING_SAMPLE_S = 900.0
+NAMING_SAMPLE_S = 300.0
 NAMING_WINDOWS = 2
 
 

@@ -117,6 +117,33 @@ as a self-contained page (in French):
 
 Open it locally, or serve the repo with GitHub Pages to read it in a browser.
 
+## Splitting a recording at its markers
+
+Markers set on a transmitter are stored in the file's standard `cue ` chunk, which
+most software silently ignores. To cut a recording at them:
+
+```sh
+./tools/decouper-marqueurs.py /path/to/00009_Name.WAV --sortie ~/decoupe
+```
+
+Each source gets a folder of numbered parts, named with their time range:
+
+```
+00009_Name/
+  01_sur_03__00-00.000_a_01-20.799.wav
+  02_sur_03__01-20.799_a_07-46.811.wav
+  03_sur_03__07-46.811_a_07-57.915.wav
+  rejoindre.sh
+```
+
+**Nothing is discarded and nothing is re-encoded.** The audio bytes are copied
+verbatim and every part of the recording is kept, so `./rejoindre.sh` reconstructs
+the original byte for byte — verified on real files. That matters because a marker
+may mean a start, an end, or just a passage worth revisiting, and the tool has no
+way to tell: a cut that turns out to be pointless has to be undoable.
+
+Each part's BWF timestamp is shifted by its offset, so timecode stays correct.
+
 ## Prior art
 
 Device-specific tools that do things this guide does not:

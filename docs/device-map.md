@@ -57,3 +57,31 @@ usable audio devices.
 Not covered — no hardware to test. If you have another RØDE device, running
 `tools/rode-doctor.sh` and opening an issue with the output is enough to extend
 this table. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+## Onboard recordings and markers
+
+Transmitters record to their own storage as **Broadcast WAV** (BWF): 48 kHz,
+32-bit IEEE float, mono, one numbered file per take, named after the transmitter.
+
+```
+fmt   16 B      format
+cue    4 B +    ← markers live here, in the standard WAV chunk
+PAD   ~31 kB    pre-allocated, all zeros
+bext  ~600 B    firmware version, origination date and time
+iXML   ~1 kB    timecode rate and flag, sample timestamp
+data            audio
+```
+
+**Markers set on the device are written to the standard `cue ` chunk.** They are
+not lost when you copy the files off — almost no player or editor displays cue
+points, so they only appear to exist inside RØDE's own software.
+
+The zero-filled `PAD ` chunk is why: the device reserves room so it can write cue
+points in place afterwards, without rewriting a multi-megabyte file.
+
+`tools/decouper-marqueurs.py` reads them, and can split a recording at its markers
+without re-encoding — see the README.
+
+**Firmware quirk:** `BWF_ORIGINATION_DATE` is written as `0026-08-25` rather than
+`2026-08-25`. Anything sorting takes by the BWF date will place them in the first
+century. Observed on firmware 1.3.3.

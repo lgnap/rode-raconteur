@@ -77,6 +77,39 @@ def test_write_wav_roundtrip(tmp_path):
                              dtype=np.int16).tolist() == samples.tolist()
 
 
+def test_record_calls_on_block_with_mono_left_channel_per_chunk():
+    chunk1 = np.array([1, -1, 2, -2], dtype=np.int16)
+    chunk2 = np.array([3, -3, 4, -4], dtype=np.int16)
+    stream = FakeStream([chunk1.tobytes(), chunk2.tobytes()])
+    pa = FakePyAudio(stream)
+    calls = []
+
+    out = record(
+        pa, RxDevice(0, "Wireless PRO RX"), threading.Event(),
+        on_block=lambda block: calls.append(block.tolist()),
+    )
+
+    # Le canal droit (timecode potentiel, plein niveau) n'est jamais transmis
+    # au rappel : seul le gauche, celui qui atterrit dans le fichier.
+    assert calls == [[1, 2], [3, 4]]
+    assert out.tolist() == [1, 2, 3, 4]
+
+
+def test_record_survives_a_raising_on_block():
+    chunk1 = np.array([1, -1, 2, -2], dtype=np.int16)
+    chunk2 = np.array([3, -3, 4, -4], dtype=np.int16)
+    stream = FakeStream([chunk1.tobytes(), chunk2.tobytes()])
+    pa = FakePyAudio(stream)
+
+    def boom(_block):
+        raise RuntimeError("le rappel casse")
+
+    out = record(pa, RxDevice(0, "Wireless PRO RX"), threading.Event(), on_block=boom)
+
+    # Le rappel a échoué deux fois, mais la capture n'a rien perdu.
+    assert out.tolist() == [1, 2, 3, 4]
+
+
 def test_record_keeps_audio_when_the_receiver_disappears():
     # Le récepteur est débranché en cours de prise : la lecture lève, la boucle
     # s'arrête, et ce qui a déjà été capté est conservé.

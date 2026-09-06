@@ -3,7 +3,7 @@ from datetime import datetime
 
 import numpy as np
 
-from conteur.job import name_recording
+from conteur.job import name_recording, rename_take
 from conteur.recorder import write_wav
 
 WHEN = datetime(2026, 9, 6, 14, 32, 8)
@@ -95,3 +95,27 @@ def test_collision_gets_a_suffix(tmp_path):
     result = name_recording(path, WHEN, model,
                             title_fn=lambda t: ("x", "title"))
     assert result.path.name == "2026-09-06_143208_bonjour-2.wav"
+
+
+def test_rename_take_slugifies_and_keeps_the_timestamp(tmp_path):
+    path = tmp_path / "2026-09-06_143208_ancien.wav"
+    path.touch()
+    out = rename_take(path, "Le Loup Gris !", WHEN)
+    assert out.name == "2026-09-06_143208_le-loup-gris.wav"
+    assert out.exists()
+    assert not path.exists()
+
+
+def test_rename_take_avoids_collision(tmp_path):
+    (tmp_path / "2026-09-06_143208_cible.wav").touch()
+    path = tmp_path / "2026-09-06_143208_source.wav"
+    path.touch()
+    out = rename_take(path, "cible", WHEN)
+    assert out.name == "2026-09-06_143208_cible-2.wav"
+
+
+def test_rename_take_rejects_an_empty_name(tmp_path):
+    path = tmp_path / "2026-09-06_143208_garde.wav"
+    path.touch()
+    assert rename_take(path, "!!!", WHEN) == path
+    assert path.exists()

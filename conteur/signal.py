@@ -8,6 +8,7 @@ CAPTURE_RATE = 48000
 WHISPER_RATE = 16000
 CREST_SQUARE_MAX = 1.5
 TIMECODE_MIN_PEAK = 0.5
+DBFS_FLOOR = -120.0
 
 
 def left_channel(interleaved: np.ndarray) -> np.ndarray:
@@ -36,3 +37,14 @@ def to_whisper_input(samples: np.ndarray) -> np.ndarray:
     """48 kHz int16 -> 16 kHz float32 dans [-1, 1]."""
     scaled = samples.astype(np.float32) / FULL_SCALE
     return resample_poly(scaled, WHISPER_RATE, CAPTURE_RATE).astype(np.float32)
+
+
+def rms_dbfs(samples: np.ndarray) -> float:
+    """Niveau RMS en dBFS, plancher à -120 pour le silence numérique."""
+    if samples.size == 0:
+        return DBFS_FLOOR
+    x = samples.astype(np.float64) / FULL_SCALE
+    rms = float(np.sqrt(np.mean(x * x)))
+    if rms <= 0.0:
+        return DBFS_FLOOR
+    return max(DBFS_FLOOR, 20.0 * np.log10(rms))

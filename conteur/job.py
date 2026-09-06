@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from conteur.naming import SILENCE, choose_name
+from conteur.naming import SILENCE, choose_name, slugify
 from conteur.paths import build_name, unique_path
 from conteur.signal import looks_like_timecode, to_whisper_input
 from conteur.titler import make_title_tracked
@@ -56,3 +56,13 @@ def name_recording(
     target = unique_path(wav_path.parent, build_name(when, slug))
     wav_path.rename(target)
     return NameResult(path=target, slug=slug, origin=origin)
+
+
+def rename_take(path: Path, new_text: str, when: datetime) -> Path:
+    """Renomme une prise à la demande. Un nom vide laisse le fichier tel quel."""
+    slug = slugify(new_text)
+    if not slug:
+        return path
+    target = unique_path(path.parent, build_name(when, slug))
+    path.rename(target)
+    return target

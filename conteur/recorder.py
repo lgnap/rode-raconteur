@@ -14,11 +14,16 @@ CHANNELS = 2
 SAMPLE_WIDTH = 2
 
 
-def record(pa, device: RxDevice, stop: threading.Event) -> np.ndarray:
+def record(pa, device: RxDevice, stop: threading.Event, on_block=None) -> np.ndarray:
     """Capture jusqu'à `stop`, rend le canal gauche en int16.
 
     Un échec de lecture (récepteur débranché) arrête proprement et rend ce qui
     a déjà été capté : aucun audio n'est perdu.
+
+    `on_block`, si fourni, est appelé une fois par bloc capté avec le canal
+    gauche seul (le canal droit peut porter du timecode plein niveau, inutile
+    pour un niveau d'entrée). Une exception levée par ce rappel ne doit pas
+    faire perdre la prise en cours.
     """
     stream = pa.open(
         format=pa.get_format_from_width(SAMPLE_WIDTH),
@@ -35,7 +40,15 @@ def record(pa, device: RxDevice, stop: threading.Event) -> np.ndarray:
                 raw = stream.read(CHUNK, exception_on_overflow=False)
             except OSError:
                 break
-            blocks.append(np.frombuffer(raw, dtype=np.int16))
+            block = np.frombuffer(raw, dtype=np.int16)
+            blocks.append(block)
+            if on_block is not None:
+                try:
+                    on_block(left_channel(block))
+                except Exception:
+                    # Un rappel d'interface qui échoue ne doit pas faire perdre
+                    # la prise en cours.
+                    pass
     finally:
         try:
             stream.stop_stream()

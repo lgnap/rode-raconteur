@@ -1,6 +1,9 @@
+import pytest
+
 import numpy as np
 from conteur.signal import (
     left_channel, crest_factor, looks_like_timecode, to_whisper_input,
+    rms_dbfs,
 )
 
 
@@ -63,3 +66,17 @@ def test_to_whisper_input_scales_to_unit_range():
     x = np.full(4800, 16384, dtype=np.int16)
     out = to_whisper_input(x)
     assert 0.4 < float(np.max(out)) < 0.6
+
+
+def test_rms_dbfs_of_full_scale_is_near_zero():
+    x = np.full(1000, 32767, dtype=np.int16)
+    assert rms_dbfs(x) == pytest.approx(0.0, abs=0.1)
+
+
+def test_rms_dbfs_of_half_scale_is_near_minus_six():
+    x = np.full(1000, 16384, dtype=np.int16)
+    assert rms_dbfs(x) == pytest.approx(-6.0, abs=0.2)
+
+
+def test_rms_dbfs_of_silence_is_floored():
+    assert rms_dbfs(np.zeros(1000, dtype=np.int16)) == -120.0

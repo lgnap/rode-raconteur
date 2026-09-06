@@ -93,3 +93,17 @@ def test_the_model_falls_back_to_cpu_without_cublas(monkeypatch):
     t.load_model()
     assert _FakeWhisperModel.calls == [("large-v3", "cpu", "int8")]
     assert t.chosen_device() == "cpu"
+
+
+def test_the_vad_threshold_is_loosened():
+    """Le seuil Silero par défaut (0.5) rejetait des prises courtes pourtant
+    sonores, nommées « silence » à tort."""
+    from conteur.transcribe import VAD_PARAMETERS
+
+    assert VAD_PARAMETERS["threshold"] < 0.5
+
+
+def test_transcribe_passes_the_vad_parameters():
+    model = FakeModel([])
+    transcribe(model, np.zeros(16000, dtype=np.float32))
+    assert model.kwargs["vad_parameters"]["threshold"] < 0.5

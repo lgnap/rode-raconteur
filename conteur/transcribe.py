@@ -9,6 +9,11 @@ DEVICE = "cuda"
 COMPUTE_TYPE = "int8_float16"
 LANGUAGE = "fr"
 
+# Le seuil Silero par défaut (0.5) rejette des prises courtes pourtant sonores :
+# mesuré sur du matériel réel, il rendait « silence » sur des fichiers culminant
+# à -0,1 dBFS. À 0.2 leur contenu est retrouvé.
+VAD_PARAMETERS = {"threshold": 0.2}
+
 
 def speech_duration(segments: Iterable) -> float:
     """Somme des durées des segments de parole rendus par le VAD."""
@@ -19,6 +24,7 @@ def transcribe(model, audio16k: np.ndarray) -> tuple[str, float]:
     """Rend (texte, durée de parole). La durée vient du VAD, pas du fichier."""
     segments, _info = model.transcribe(
         audio16k, language=LANGUAGE, vad_filter=True,
+        vad_parameters=dict(VAD_PARAMETERS),
     )
     segments = list(segments)
     text = " ".join(s.text.strip() for s in segments if s.text.strip())

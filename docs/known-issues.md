@@ -4,6 +4,23 @@ Relevés à la revue finale de la branche `feat/enregistreur-vocal` (6 septembre
 arbitrés et laissés en l'état plutôt que corrigés. Aucun n'est bloquant ; chacun est
 documenté avec ce qu'il coûte et ce qu'il faudrait faire.
 
+## Détection de parole : seuil VAD abaissé, et « silence » restreint
+
+Le seuil Silero par défaut (0.5) rejetait des prises courtes pourtant sonores.
+Mesuré sur du matériel réel : huit fichiers culminant entre −0,1 et −1,0 dBFS,
+avec un RMS entre −20 et −31 dBFS, ont été nommés `silence`. Le seuil est abaissé à
+**0.2**, ce qui en récupère une partie.
+
+Le reste ne rend rien même sans VAD — ou seulement des hallucinations de Whisper,
+du type « Merci d'avoir regardé cette vidéo ! » sur du non-verbal. Ces prises sont
+désormais nommées **`sans-parole`** et non `silence` : un fichier à −30 dBFS n'est
+pas silencieux, il est audible sans parole reconnue. `silence` est réservé aux
+fichiers réellement muets, sous −50 dBFS RMS.
+
+Conséquence à connaître : un enregistrement de bruit, de musique ou de sons non
+verbaux sera nommé `sans-parole`. C'est voulu — un nom inventé par hallucination
+serait pire qu'un nom générique honnête.
+
 ## Écart assumé à la spec : les prises timecode sont renommées
 
 La spec dit qu'une prise refusée par le garde-fou timecode est « conservée sous son

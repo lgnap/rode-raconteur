@@ -32,6 +32,16 @@ def test_noise_is_not_timecode():
     assert looks_like_timecode(noise) is False
 
 
+def test_loud_noise_is_not_timecode():
+    # Pleine échelle (la garde d'amplitude laisse passer) mais facteur de crête
+    # élevé : seule la condition de crête peut rejeter ce signal.
+    rng = np.random.default_rng(2)
+    loud = (rng.normal(0, 8000, 48000)).clip(-32768, 32767).astype(np.int16)
+    assert np.max(np.abs(loud.astype(np.float64))) / 32768 > 0.5
+    assert crest_factor(loud) > 1.5
+    assert looks_like_timecode(loud) is False
+
+
 def test_silence_is_not_timecode():
     assert looks_like_timecode(np.zeros(4800, dtype=np.int16)) is False
 

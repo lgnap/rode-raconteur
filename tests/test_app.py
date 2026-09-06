@@ -43,3 +43,43 @@ def test_takes_list_shows_pending_then_final_name(qapp):
     win.update_take(row, "2026-09-06_143208_le-loup.wav", "title")
     assert "le-loup" in win.take_text(row)
     assert "title" in win.take_text(row)
+
+
+def test_stop_writes_the_wav_before_submitting_the_naming_job(qapp, tmp_path, monkeypatch):
+    import numpy as np
+
+    import conteur.app as app_mod
+
+    class Dev:
+        index = 0
+        name = "Wireless PRO RX"
+
+    class FakeQueue:
+        def __init__(self):
+            self.submitted = []
+
+        def start(self):
+            pass
+
+        def submit(self, path, when, on_done):
+            # On note l'existence du fichier AU MOMENT de la soumission : c'est
+            # l'ordre qui est testé, pas seulement le résultat final.
+            self.submitted.append((path, path.exists()))
+
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path)
+    monkeypatch.setattr(
+        app_mod, "record", lambda pa, device, stop: np.array([1, 2, 3], dtype=np.int16)
+    )
+    monkeypatch.setattr(app_mod, "load_model", lambda: object())
+
+    queue = FakeQueue()
+    win = MainWindow(find_rx=lambda: Dev(), queue=queue, pa=object())
+
+    win.toggle_recording()   # démarre
+    win.toggle_recording()   # arrête
+
+    assert len(queue.submitted) == 1
+    path, existed_at_submit = queue.submitted[0]
+    assert existed_at_submit is True
+    assert path.parent == tmp_path
+    assert "sans-nom" in path.name

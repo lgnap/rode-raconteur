@@ -34,8 +34,20 @@ INCOMPLETE = "incomplet"
 PENDING = "transcription…"
 
 
+def describe_error(error: BaseException) -> str:
+    """Rend une cause lisible, en traduisant les échecs connus les plus opaques."""
+    text = str(error).strip() or error.__class__.__name__
+    if "cublas" in text.lower() or "cudnn" in text.lower():
+        return (
+            "bibliothèques CUDA introuvables, transcription impossible "
+            "(voir docs/known-issues.md)"
+        )
+    return f"{error.__class__.__name__} : {text}"
+
+
 class MainWindow(QMainWindow):
     take_named = Signal(int, str, str)
+    naming_failed = Signal(str, str)
 
     def __init__(self, find_rx=None, queue=None, pa=None, pa_factory=None):
         super().__init__()
@@ -95,6 +107,7 @@ class MainWindow(QMainWindow):
         self._level_timer.timeout.connect(self._refresh_level)
 
         self.take_named.connect(self._apply_name)
+        self.naming_failed.connect(self.report_naming_error)
         self._poll = QTimer(self)
         self._poll.timeout.connect(self.refresh_device)
         self._poll.start(POLL_MS)
@@ -221,6 +234,10 @@ class MainWindow(QMainWindow):
         if self._last_block is not None:
             self.set_level(self._last_block)
 
+    def report_naming_error(self, filename: str, reason: str) -> None:
+        """Affiche pourquoi le nommage a échoué, pas seulement qu'il a échoué."""
+        self._set_status(f"Nommage impossible pour {filename} : {reason}", sticky=True)
+
     def report_write_error(self, path, error) -> None:
         self._set_status(f"Écriture impossible dans {path} : {error}", sticky=True)
 
@@ -326,9 +343,13 @@ class MainWindow(QMainWindow):
         def runner(path: Path, at: datetime):
             return name_recording(path, at, self._model)
 
-        def on_done(_src, result):
+        def on_done(_src, result, error=None):
             if result is None:
                 self.take_named.emit(row, provisional.name, ORIGIN_FAILED)
+                if error is not None:
+                    # Sans ceci l'utilisateur voit "échec" sans jamais pouvoir
+                    # en connaître la cause : il faut rejouer la chaîne à la main.
+                    self.naming_failed.emit(provisional.name, describe_error(error))
             else:
                 self.take_named.emit(row, result.path.name, result.origin)
 

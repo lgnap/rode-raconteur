@@ -4,6 +4,23 @@ Relevés à la revue finale de la branche `feat/enregistreur-vocal` (6 septembre
 arbitrés et laissés en l'état plutôt que corrigés. Aucun n'est bloquant ; chacun est
 documenté avec ce qu'il coûte et ce qu'il faudrait faire.
 
+## Bibliothèques CUDA et repli CPU
+
+Sur cette machine, CUDA vient des paquets pip `nvidia-cublas-cu12` et
+`nvidia-cudnn-cu12` plutôt que de la distribution, et leurs `.so` ne sont pas sur le
+chemin de l'éditeur de liens. CTranslate2 ouvre `libcublas.so.12` par `dlopen` au
+**premier encodage**, pas au chargement du modèle : un GPU visible et un modèle chargé
+sans erreur ne garantissent donc rien.
+
+`conteur/cuda.py` précharge ces bibliothèques en `RTLD_GLOBAL` avant de construire le
+modèle. `LD_LIBRARY_PATH` ne conviendrait pas : il est lu au démarrage du processus,
+trop tard pour être corrigé depuis Python.
+
+Si cuBLAS reste introuvable, le modèle est construit sur **CPU** en `int8` au lieu
+d'échouer en pleine transcription. C'est plus lent — acceptable sur des fragments
+courts, sensible sur un récit de plusieurs minutes. `chosen_device()` dit ce qui a été
+retenu.
+
 ## Fermeture : deux attentes non bornées
 
 `app.py` — `shutdown()` appelle `_finish_capture`, qui fait `self._capture.join()`

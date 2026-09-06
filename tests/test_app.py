@@ -773,3 +773,35 @@ def test_take_named_crosses_the_thread_boundary(qapp, tmp_path):
     assert "le-loup" in win.take_text(row)
     assert "titre généré" in win.take_text(row)
     assert win._takes_meta[row][0].name == "2026-09-06_143208_le-loup.wav"
+
+
+# --- remontée de la cause d'un échec de nommage ---
+
+
+def test_describe_error_translates_the_cublas_failure():
+    from conteur.app import describe_error
+
+    reason = describe_error(RuntimeError("Library libcublas.so.12 is not found"))
+    assert "CUDA" in reason
+    assert "libcublas" not in reason          # l'utilisateur n'a pas à décoder ça
+
+
+def test_describe_error_keeps_an_unknown_cause_intact():
+    from conteur.app import describe_error
+
+    assert describe_error(ValueError("disque plein")) == "ValueError : disque plein"
+
+
+def test_naming_failure_reason_is_shown_and_survives_the_device_poll(qapp):
+    class Dev:
+        index = 0
+        name = "Wireless PRO RX"
+
+    win = MainWindow(find_rx=lambda: Dev(), queue=None)
+    win.report_naming_error("2026-09-06_162855_sans-nom.wav", "bibliothèques CUDA introuvables")
+    assert "2026-09-06_162855_sans-nom.wav" in win.status_label.text()
+    assert "CUDA" in win.status_label.text()
+
+    # Le sondage périphérique ne doit pas effacer la cause.
+    win.refresh_device()
+    assert "CUDA" in win.status_label.text()

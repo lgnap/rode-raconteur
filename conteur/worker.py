@@ -35,11 +35,14 @@ class NamingQueue:
             if item is _STOP:
                 return
             wav_path, when, on_done = item
+            error: Exception | None = None
             try:
                 result = self._runner(wav_path, when)
-            except Exception:
-                result = None          # l'échec ne tue pas la file
+            except Exception as exc:
+                # L'échec ne tue pas la file, mais la cause ne doit pas être
+                # perdue : sans elle l'interface ne peut afficher que "échec".
+                result, error = None, exc
             try:
-                on_done(wav_path, result)
+                on_done(wav_path, result, error)
             except Exception:
                 pass

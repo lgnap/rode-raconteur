@@ -25,8 +25,31 @@ def transcribe(model, audio16k: np.ndarray) -> tuple[str, float]:
     return text.strip(), speech_duration(segments)
 
 
+CPU_COMPUTE_TYPE = "int8"
+
+_last_device = None
+
+
+def chosen_device() -> str | None:
+    """Périphérique réellement retenu au dernier `load_model()`, ou None."""
+    return _last_device
+
+
 def load_model():
-    """Charge large-v3 en int8_float16 sur GPU. Appelé une fois au démarrage."""
+    """Charge large-v3, sur GPU si cuBLAS est chargeable, sinon sur CPU.
+
+    Appelé une fois au démarrage. `chosen_device()` dit ce qui a été retenu.
+    """
+    global _last_device
     from faster_whisper import WhisperModel
 
-    return WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
+    from conteur.cuda import preload_cuda_libraries
+
+    # CTranslate2 ouvre cuBLAS par dlopen au premier encodage : construire le
+    # modèle sur GPU sans lui échouerait plus tard, en pleine transcription.
+    if preload_cuda_libraries():
+        _last_device = DEVICE
+        return WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
+
+    _last_device = "cpu"
+    return WhisperModel(MODEL_NAME, device="cpu", compute_type=CPU_COMPUTE_TYPE)

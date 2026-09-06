@@ -21,3 +21,13 @@ def test_keywords_handles_accents():
 
 def test_keywords_on_empty_text_is_empty():
     assert keywords("") == []
+
+
+def test_frequent_stopwords_are_excluded():
+    # "avec" et "dans" sont plus fréquents que les vrais mots-clés : seul le
+    # filtre de mots-vides peut les écarter, la longueur ne suffit pas.
+    text = "avec avec avec avec dans dans dans dans chateau chateau foret"
+    out = keywords(text, n=2)
+    assert "avec" not in out
+    assert "dans" not in out
+    assert out == ["chateau", "foret"]

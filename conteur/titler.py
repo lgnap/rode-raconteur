@@ -1,4 +1,4 @@
-"""Fabrication d'un titre. Le client HTTP est injectable pour les tests."""
+"""Fabrication d'un titre à partir d'une transcription."""
 
 import re
 import unicodedata

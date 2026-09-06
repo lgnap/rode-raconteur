@@ -219,6 +219,35 @@ def test_rename_take_renames_the_file_and_updates_the_row(qapp, tmp_path):
     assert "manuel" in win.take_text(row)
 
 
+def test_manual_rename_survives_a_late_automatic_result(qapp, tmp_path):
+    # Course réelle : l'utilisateur renomme la prise à la main avant que la
+    # file de nommage automatique n'ait fini son travail sur cette même
+    # ligne. La file tient encore le chemin provisoire d'origine ; comme il
+    # n'existe plus après le renommage manuel, `name_recording` échoue et le
+    # résultat qui arrive ensuite est un "échec" tardif. Il ne doit pas
+    # écraser le nom donné à la main.
+    from datetime import datetime
+
+    when = datetime(2026, 9, 6, 14, 32, 8)
+    path = tmp_path / "2026-09-06_143208_sans-nom.wav"
+    path.touch()
+
+    win = MainWindow(find_rx=lambda: None, queue=None)
+    row = win.add_take(path.name)
+    win._takes_meta.append((path, when))
+
+    win.rename_take(row, "Le Loup Gris !")
+    assert "le-loup-gris" in win.take_text(row)
+    assert "manuel" in win.take_text(row)
+
+    # Résultat automatique tardif pour la même ligne, sur le nom provisoire.
+    win.take_named.emit(row, path.name, "échec")
+
+    assert "le-loup-gris" in win.take_text(row)
+    assert "manuel" in win.take_text(row)
+    assert win._takes_meta[row][0].name == "2026-09-06_143208_le-loup-gris.wav"
+
+
 def test_successful_naming_updates_takes_meta_with_the_final_path(
     qapp, tmp_path, monkeypatch,
 ):

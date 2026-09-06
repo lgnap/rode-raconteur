@@ -34,6 +34,10 @@ class MainWindow(QMainWindow):
         self._stop = threading.Event()
         self._rows: list[QListWidgetItem] = []
         self._takes_meta: list[tuple[Path, datetime]] = []
+        # Lignes renommées à la main : un résultat automatique tardif (souvent
+        # un "échec" dû à la course entre le renommage manuel et la file, qui
+        # tient encore le chemin provisoire d'origine) ne doit plus les toucher.
+        self._manually_renamed_rows: set[int] = set()
 
         self.setWindowTitle("Conteur")
         self.status_label = QLabel()
@@ -88,6 +92,11 @@ class MainWindow(QMainWindow):
         return self._rows[row].text()
 
     def _apply_name(self, row: int, filename: str, origin: str) -> None:
+        if row in self._manually_renamed_rows:
+            # Le renommage manuel a gagné ; un résultat automatique tardif
+            # (typiquement un "échec" dû à la course sur le chemin provisoire)
+            # ne doit pas l'effacer.
+            return
         old_path, when = self._takes_meta[row]
         self._takes_meta[row] = (old_path.parent / filename, when)
         self.update_take(row, filename, origin)
@@ -109,6 +118,7 @@ class MainWindow(QMainWindow):
         path, when = self._takes_meta[row]
         target = rename_take_file(path, new_text, when)
         self._takes_meta[row] = (target, when)
+        self._manually_renamed_rows.add(row)
         self.update_take(row, target.name, "manuel")
 
     def _ask_rename(self, item) -> None:

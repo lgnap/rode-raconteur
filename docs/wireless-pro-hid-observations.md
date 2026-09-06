@@ -86,3 +86,55 @@ Fedora 44, kernel 7.1.12, `hidraw` access via a udev rule tagging
 RØDE Central reports 1.0.2 for the case.
 
 Happy to run further captures if any of this is useful.
+
+
+---
+
+# Confirmed: deleting onboard recordings
+
+`01 4A 01` on report id 1, 17 bytes, deletes every onboard recording on a
+Wireless PRO TX. Tested on both of mine, one connected directly and one
+**through the charging case** — the docked path works, so there is no need to
+undock the transmitters.
+
+```
+01 4A 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ->  /dev/hidrawN
+02 4A 41 00     ACK 0x41,   0 %
+02 4A 41 05                 5 %
+   …
+02 4A 41 64               100 %
+```
+
+Byte [3] is a **percentage**, not a status code: krode's documented "status 100
+= success" is the device reporting 100 % complete. 6.1 GB erased in 1.8 s.
+
+## Identifying which transmitter you are about to erase
+
+Both transmitters share PID `0x0056`, so VID/PID is not enough. The HID serial
+is the FAT volume UUID of that transmitter's storage, which makes the mapping
+unambiguous:
+
+```
+HID_UNIQ=800A92D6   ↔   volume 800A-92D6
+HID_UNIQ=800AF63E   ↔   volume 800A-F63E
+```
+
+Mount the volume, read a filename, and you know which physical microphone a
+given serial belongs to.
+
+**Node numbers are not stable.** A replug swapped `hidraw10` and `hidraw12`
+between the two transmitters. Re-read `HID_UNIQ` from sysfs immediately before
+writing, rather than trusting a path resolved earlier.
+
+## Afterwards, replug
+
+The transmitter re-enumerates and its volume returns **without a filesystem** —
+`I/O error` on the block device, plus a stale extra node. Unplugging and
+replugging the case brings both volumes back as empty FAT32. Waiting does not
+help; the replug is part of the procedure.
+
+## Safety
+
+The storage is read-only at the device level (`/sys/block/*/ro = 1`), so this
+is the only way to erase. Copy and verify your recordings first — this is
+irreversible and there is no confirmation prompt.

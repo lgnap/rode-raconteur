@@ -2,8 +2,9 @@
 
 import struct
 from datetime import datetime
+from pathlib import Path
 
-from conteur.bwf import chunks, started_at
+from conteur.bwf import chunks, started_at, cue_points, split
 
 
 def _riff(*parts: bytes) -> bytes:
@@ -72,3 +73,49 @@ def test_without_bext_the_start_is_the_close_minus_the_duration(tmp_path):
         when = started_at(fh, closed_at=datetime(2026, 9, 7, 11, 14, 32),
                           rate=48000, frames=48000 * 30)
     assert when == datetime(2026, 9, 7, 11, 14, 2)
+
+
+def _cue(*positions: int) -> bytes:
+    body = struct.pack("<I", len(positions))
+    for i, pos in enumerate(positions, 1):
+        body += struct.pack("<II4sIII", i, pos, b"data", 0, 0, pos)
+    return _chunk(b"cue ", body)
+
+
+def test_cue_points_are_read_as_sample_offsets(tmp_path):
+    path = tmp_path / "m.wav"
+    path.write_bytes(_riff(_fmt(), _cue(4800, 9600), _chunk(b"data", b"\x00" * 64)))
+    with path.open("rb") as fh:
+        assert cue_points(fh) == [4800, 9600]
+
+
+def test_a_take_without_markers_has_no_cue_points(tmp_path):
+    path = tmp_path / "n.wav"
+    path.write_bytes(_riff(_fmt(), _cue(), _chunk(b"data", b"\x00" * 64)))
+    with path.open("rb") as fh:
+        assert cue_points(fh) == []
+
+
+def test_splitting_keeps_every_byte_of_audio(tmp_path):
+    """Nothing is discarded: a marker may mean a start, an end, or just a
+    passage worth revisiting, and the tool cannot tell."""
+    audio = bytes(range(256)) * 16          # 4096 bytes = 1024 frames
+    path = tmp_path / "s.wav"
+    path.write_bytes(_riff(_fmt(), _cue(400, 800), _chunk(b"data", audio)))
+
+    parts = split(path, tmp_path / "out")
+    assert len(parts) == 3
+
+    joined = b""
+    for part in parts:
+        with part.open("rb") as fh:
+            offset, size = chunks(fh)["data"]
+            fh.seek(offset)
+            joined += fh.read(size)
+    assert joined == audio
+
+
+def test_a_take_without_markers_is_not_split(tmp_path):
+    path = tmp_path / "one.wav"
+    path.write_bytes(_riff(_fmt(), _cue(), _chunk(b"data", b"\x00" * 64)))
+    assert split(path, tmp_path / "out") == []

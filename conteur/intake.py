@@ -128,11 +128,24 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
             continue
         yield Event("verified", take=take.name)
 
-        started = _started(provisional, take)
-        final_dir = dest_for(started)
-        final_dir.mkdir(parents=True, exist_ok=True)
-        final = unique_path(final_dir, import_name(started, take.name))
-        provisional.rename(final)
+        # Everything after the copy is guarded too, and broadly: _started
+        # raises struct.error on a malformed header, the rename raises OSError
+        # across filesystems, and dest_for is the caller's code. Left
+        # unguarded, the first bad take ended the whole card — while the
+        # promise above is that a failure on one take does not stop the
+        # others. The ledger write stays outside on purpose: if the proof
+        # cannot be written we must stop, or we copy without recording and
+        # recopy for ever.
+        try:
+            started = _started(provisional, take)
+            final_dir = dest_for(started)
+            final_dir.mkdir(parents=True, exist_ok=True)
+            final = unique_path(final_dir, import_name(started, take.name))
+            provisional.rename(final)
+        except (OSError, ValueError, struct.error) as error:
+            yield Event("failed", take=take.name, detail=str(error))
+            continue
+
         ledger.add(Record(digest=digest, card_name=take.name, size=take.size,
                           path=final, imported_at=datetime.now()))
         yield Event("recorded", take=take.name, detail=str(final))
@@ -147,7 +160,14 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
             return unique_path(
                 final.parent, part_name(start, take.name, index, total)).name
 
-        parts = splitter(final, final.parent, name_for=name_part)
+        # A take that cannot be split is still a take that was copied,
+        # verified and recorded: it is reported and then submitted whole,
+        # rather than costing the rest of the card.
+        try:
+            parts = splitter(final, final.parent, name_for=name_part)
+        except (OSError, ValueError, struct.error) as error:
+            parts = []
+            yield Event("failed", take=take.name, detail=str(error))
         if parts:
             yield Event("split", take=take.name, detail=str(len(parts)))
             for part in parts:

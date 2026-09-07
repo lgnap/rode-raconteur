@@ -1,6 +1,8 @@
 """The whole chain, unrolled synchronously. No Qt, no thread, no hardware."""
 
 from datetime import datetime
+
+import pytest
 from pathlib import Path
 
 from conteur.card import Take, VerificationError
@@ -299,3 +301,85 @@ def test_a_part_is_dated_visible_to_recovery_and_beside_its_take(tmp_path):
     for name in names:
         assert parse_timestamp(name) is not None
         assert is_orphan(name)
+
+
+def test_a_take_that_cannot_be_split_does_not_cost_the_rest_of_the_card(tmp_path):
+    """bwf.split raises ValueError on a missing chunk. Outside the per-take
+    guard that escaped the loop, and the second take was never attempted —
+    against intake's own promise that a failure on one take does not stop the
+    others."""
+    card = FakeCard([_take("00001_Source.WAV"), _take("00002_Source.WAV")])
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    submitted = []
+    seen = []
+
+    def distinct(card_, take, dest, **kwargs):
+        dest.write_bytes(take.name.encode())
+        return take.name[:5] * 12 + "abcd"
+
+    def splitter(path, out_dir, name_for=None):
+        seen.append(path.name)
+        if len(seen) == 1:
+            raise ValueError("missing fmt or data chunk")
+        return []
+
+    events = list(intake(card, led, lambda when: tmp_path / "out",
+                         submitted.append, copier=distinct, splitter=splitter))
+    kinds = [e.kind for e in events]
+    assert len(seen) == 2
+    assert kinds.count("recorded") == 2
+    assert kinds.count("failed") == 1
+    # The take that could not be split was still copied, recorded and named.
+    assert len(submitted) == 2
+    assert len(led.records()) == 2
+
+
+def test_a_broken_header_after_the_copy_does_not_stop_the_next_take(tmp_path):
+    """_started unpacks the header of the file just written; a malformed one
+    raises struct.error, which is neither OSError nor ValueError."""
+    import struct
+
+    card = FakeCard([_take("00001_Source.WAV"), _take("00002_Source.WAV")])
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    seen = []
+
+    def distinct(card_, take, dest, **kwargs):
+        dest.write_bytes(take.name.encode())
+        return take.name[:5] * 12 + "abcd"
+
+    def broken(path, take):
+        seen.append(take.name)
+        if len(seen) == 1:
+            raise struct.error("unpack requires a buffer of 2 bytes")
+        return WHEN
+
+    import conteur.intake as intake_module
+    original = intake_module._started
+    intake_module._started = broken
+    try:
+        events = list(intake(card, led, lambda when: tmp_path / "out",
+                             lambda p: None, copier=distinct,
+                             splitter=lambda path, out, **kwargs: []))
+    finally:
+        intake_module._started = original
+
+    kinds = [e.kind for e in events]
+    assert seen == ["00001_Source.WAV", "00002_Source.WAV"]
+    assert kinds.count("failed") == 1
+    assert kinds.count("recorded") == 1
+    assert len(led.records()) == 1
+
+
+def test_a_ledger_that_cannot_be_written_still_stops_everything(tmp_path):
+    """The one failure that is deliberately not caught: copying without
+    recording means recopying for ever, and an erase lock with no proof."""
+    card = FakeCard([_take("00001_Source.WAV")])
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+
+    def refuse(record):
+        raise OSError("read-only file system")
+
+    led.add = refuse
+    with pytest.raises(OSError):
+        list(intake(card, led, lambda when: tmp_path / "out", lambda p: None,
+                    splitter=lambda path, out, **kwargs: []))

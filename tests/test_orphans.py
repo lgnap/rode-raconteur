@@ -52,3 +52,18 @@ def test_find_orphans_ignores_everything_already_named(tmp_path):
     (tmp_path / "2026-09-06_162542_le-loup.wav").write_bytes(b"")
     (tmp_path / "notes.txt").write_bytes(b"")
     assert find_orphans(tmp_path) == []
+
+
+def test_an_unnamed_import_is_recovered_too():
+    """Imported takes carry the card's name between the stamp and the slug.
+
+    Splitting on the first underscore, as the original did, made them
+    unrecognisable — an import whose naming failed would have stayed unnamed
+    for ever, silently.
+    """
+    assert is_orphan("2026-09-07_111030_00002_Source-Baffle__sans-nom.wav")
+    assert is_orphan("2026-09-07_111030_00002_Source-Baffle__sans-nom-2.wav")
+
+
+def test_a_named_import_is_not_an_orphan():
+    assert not is_orphan("2026-09-07_111030_00002_Source-Baffle__la-licorne.wav")

@@ -35,11 +35,24 @@ def parse_timestamp(name: str) -> datetime | None:
 
 
 def is_orphan(name: str) -> bool:
-    """True for `<timestamp>_sans-nom.wav` and its collision variants."""
+    """True for a take still carrying the provisional slug.
+
+    Two shapes exist. A take recorded here is `<stamp>_sans-nom.wav`. An
+    imported one carries the card's name in between:
+    `<stamp>_00002_Source-Baffle__sans-nom.wav`.
+
+    The slug is therefore read from the last `__` segment when there is one,
+    the same rule tools/nommer-morceaux.py uses to decide a file is already
+    named. Splitting on the first underscore made every imported take
+    invisible to recovery.
+    """
     if not name.endswith(".wav") or parse_timestamp(name) is None:
         return False
     stem = name[: -len(".wav")]
-    tail = stem.split("_", 2)[-1] if stem.count("_") >= 2 else ""
+    if "__" in stem:
+        tail = stem.rsplit("__", 1)[1]
+    else:
+        tail = stem.split("_", 2)[-1] if stem.count("_") >= 2 else ""
     return tail == UNNAMED or re.fullmatch(rf"{re.escape(UNNAMED)}-\d+", tail) is not None
 
 

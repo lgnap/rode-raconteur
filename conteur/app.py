@@ -238,10 +238,18 @@ class MainWindow(QMainWindow):
         self.level_bar.setTextVisible(False)
         self.takes = QListWidget()
 
+        # One erase button per card, no global one: rebuilt wholesale by
+        # _rebuild_erase_controls whenever the verdicts it reads from change.
+        self.erase_container = QWidget()
+        self._erase_layout = QVBoxLayout(self.erase_container)
+        self._erase_layout.setContentsMargins(0, 0, 0, 0)
+        self._erase_buttons: list[QPushButton] = []
+
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
         layout.addWidget(self.record_button)
         layout.addWidget(self.import_button)
+        layout.addWidget(self.erase_container)
         layout.addWidget(self.level_bar)
         layout.addWidget(self.takes)
         holder = QWidget()
@@ -272,6 +280,7 @@ class MainWindow(QMainWindow):
         self._poll.timeout.connect(self.refresh_device)
         self._poll.start(POLL_MS)
         self.refresh_device()
+        self._rebuild_erase_controls()
         # The model is loaded once at startup and stays resident. Loading it
         # off the UI thread avoids freezing the window at the first stop of a
         # capture, at the worst possible moment.
@@ -343,6 +352,9 @@ class MainWindow(QMainWindow):
             return
         self._clear_status()
         self._snapshot = ImportSnapshot()
+        # A verdict in flight means nothing yet: the previous run's cards must
+        # not stay offered to erase while a new one is reading them.
+        self._rebuild_erase_controls()
         self._import_stop.clear()
         cards = list(self._cards)
         stop = self._import_stop
@@ -412,6 +424,7 @@ class MainWindow(QMainWindow):
         # the status every two seconds, so the result of an import that took
         # minutes used to vanish before anyone read it.
         self.refresh_device()
+        self._rebuild_erase_controls()
         self._set_status(self._snapshot.summary(), sticky=True)
 
     def erasable(self) -> list[tuple[str, bool, str]]:
@@ -431,6 +444,36 @@ class MainWindow(QMainWindow):
             else:
                 rows.append((serial, False, "des prises n'ont pas été copiées"))
         return rows
+
+    def _rebuild_erase_controls(self) -> None:
+        """Rebuild the per-card erase buttons from `erasable()`, wholesale.
+
+        One button per card, never a control that erases more than one: that
+        is the single action here that cannot be undone, so a global button
+        would hide which device it wipes. Rebuilt from scratch rather than
+        diffed against the previous rows — at most a couple of cards are ever
+        docked at once, so a full rebuild costs nothing and there is no state
+        to keep in sync between one call and the next.
+
+        Called whenever the verdicts backing `erasable()` can have changed:
+        an import starting (clearing them), one finishing (populating them),
+        and an erase completing (dropping the one it erased) — never on the
+        two-second device poll, which touches none of that.
+        """
+        for button in self._erase_buttons:
+            self._erase_layout.removeWidget(button)
+            button.deleteLater()
+        self._erase_buttons = []
+        for serial, allowed, reason in self.erasable():
+            if allowed:
+                button = QPushButton(f"Effacer {serial} — {reason}")
+                button.clicked.connect(
+                    lambda _checked=False, serial=serial: self.erase_serials([serial]))
+            else:
+                button = QPushButton(f"{serial} : {reason}")
+                button.setEnabled(False)
+            self._erase_layout.addWidget(button)
+            self._erase_buttons.append(button)
 
     def erase_serials(self, serials: list[str]) -> None:
         """Erase several cards one after another, re-resolving between each.
@@ -492,6 +535,7 @@ class MainWindow(QMainWindow):
             self._set_status(f"{serial} : {error}", sticky=True)
             return
         self.refresh_device()
+        self._rebuild_erase_controls()
 
     def _start_model_loading(self) -> None:
         if self._model_loader is not None:

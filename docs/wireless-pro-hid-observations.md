@@ -126,12 +126,32 @@ given serial belongs to.
 between the two transmitters. Re-read `HID_UNIQ` from sysfs immediately before
 writing, rather than trusting a path resolved earlier.
 
-## Afterwards, replug
+## Afterwards
 
-The transmitter re-enumerates and its volume returns **without a filesystem** —
-`I/O error` on the block device, plus a stale extra node. Unplugging and
-replugging the case brings both volumes back as empty FAT32. Waiting does not
-help; the replug is part of the procedure.
+Re-measured on 2026-09-07, on both transmitters, docked in the charging case
+over a SuperSpeed link. The earlier note here said a replug was required; it is
+not, and the difference is worth stating precisely.
+
+The erase itself takes **1.2 s to 1.8 s** for 100 MB and 244 MB respectively —
+so the duration is dominated by the flash, not by what is stored. Twenty-one
+progress reports arrive, `00` to `64` in steps of `05`, and they arrive in a
+burst *after* the work is done rather than during it.
+
+The card as the **charging case** presents it comes back immediately as empty
+FAT32, readable without unplugging anything:
+
+```
+Volume Serial Number is 800A-F63E
+No files
+                     31 033 982 976 bytes free
+```
+
+What does happen is that the transmitter re-enumerates and comes back
+presenting **its own storage interface**, in addition to the case's. That
+second node has no filesystem and no ACL, and reading it gives
+`Permission denied` or an I/O error. That is almost certainly what the earlier
+note was describing — the extra node, not the card. Ignore it and read the
+case's.
 
 ## Safety
 

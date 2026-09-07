@@ -21,3 +21,11 @@
 
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="19f7", MODE="0660", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTR{idVendor}=="19f7", MODE="0660", TAG+="uaccess"
+
+# The onboard recordings are a block device, and reaching them needs the same
+# treatment.  A removable USB volume usually gets an ACL from systemd's own
+# seat handling, so this looks redundant until it is not: after an erase the
+# transmitter re-enumerates and presents its own storage node, which arrives
+# as root:root 0600 with no seat tag at all.  Without this line that node is
+# unreachable, and the only clue is a bare "Permission denied".
+SUBSYSTEM=="block", ATTRS{idVendor}=="19f7", MODE="0660", TAG+="uaccess"

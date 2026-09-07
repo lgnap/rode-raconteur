@@ -192,3 +192,38 @@ the normal state of a device you just connected, not a corrupted file.
 the card comes from the case or from a transmitter connected directly. Deleting
 a take through the filesystem is impossible by design — see
 [krode.md](krode.md).
+
+### After an erase, the same card appears twice
+
+Erasing makes the transmitter re-enumerate, and it comes back presenting **its
+own storage interface** even while it is sitting in the charging case. The same
+physical card is then two block devices:
+
+```
+sdb  scsi 2:0:0:0  19f7:007c  serial 00000000V332  5000M  vfat 800A-F63E  0660 +acl
+sdd  scsi 3:0:0:0  19f7:0056  serial 800AF63E       480M  (no filesystem)  0600
+```
+
+The one to use is the card as the **case** presents it. The transmitter's own
+node carries no filesystem, is slower, and arrives as `root:root 0600` with no
+seat tag — the udev rule in this repo now covers `SUBSYSTEM=="block"` for
+exactly that reason.
+
+Anything enumerating cards has to deduplicate: the two nodes are the same
+storage, and they are tied together by the transmitter identity — the card's
+FAT volume serial equals the transmitter's `HID_UNIQ`, which equals the USB
+serial its own node reports.
+
+### Recognising a RØDE card without asking udev
+
+The FAT boot sector says it directly, which needs no blkid, no udev database
+and no settling time after a re-enumeration:
+
+```
+offset 0x03   OEM name       "RODE"
+offset 0x2b   volume label   "WirelessPRO"
+offset 0x43   volume serial  800A-F63E      (FAT32; 0x27 on FAT16)
+```
+
+`blkid` and `lsblk` do report the same UUID, but only once udev has re-probed
+the device — which is not immediate after an erase.

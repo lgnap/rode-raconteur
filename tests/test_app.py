@@ -1990,3 +1990,43 @@ def test_a_removed_erase_button_leaves_the_window_at_once(qapp):
 
     assert win._erase_buttons == []
     assert button.parent() is None
+
+
+def test_an_erase_that_could_not_be_written_down_says_so_and_still_erased(
+    qapp, tmp_path, monkeypatch,
+):
+    """The card is gone whatever the ledger managed to record. The window has
+    to say both things, because only one of them is recoverable."""
+    from pathlib import Path
+
+    from conteur.devices import StorageDevice
+    from conteur.intake import CardVerdict, Event
+
+    block = tmp_path / "sdc"
+    block.write_bytes(b"\x00")
+
+    class FakeCard:
+        serial = "800A-92D6"
+
+    monkeypatch.setattr(app_mod, "Card", lambda fh: FakeCard())
+    monkeypatch.setattr(
+        app_mod, "erase_card",
+        lambda card, ledger, verdict, node: iter([
+            Event("erasing", detail=verdict.serial),
+            Event("erased", detail=verdict.serial),
+            Event("unlogged",
+                  detail="effacement non consigné : read-only file system"),
+            Event("reinventoried", detail="0"),
+        ]))
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    verdict = CardVerdict(serial="800A-92D6", digests=frozenset({"aa" * 32}),
+                          inventory=(), complete=True, takes=1, verified=1)
+    win._snapshot.verdicts[verdict.serial] = verdict
+    device = StorageDevice("800A-92D6", block, Path("/dev/hidraw4"), True)
+
+    win._erase_one(device, verdict)
+
+    text = win.status_label.text()
+    assert "carte effacée" in text
+    assert "non consigné" in text

@@ -326,6 +326,27 @@ def _fresh_takes(card):
     return card.takes()
 
 
+def _note_erasure(ledger: Ledger, outcome: str, takes: int,
+                  remaining: int | None) -> Iterator[Event]:
+    """Write the attempt down, and never let that failing look like the card
+    was spared.
+
+    The command has already gone through by the time this runs. A card is
+    erased whatever the disk has to say about it, so an unwritable ledger is
+    reported as its own thing rather than folded into the erase's outcome:
+    told the erase failed, a user runs it again, which is the one direction
+    it is dangerous to be imprecise in.
+
+    Only the two ends that leave the card's state in doubt are recorded —
+    erased, and undetermined. A refusal sends nothing, and a transmitter that
+    answers with a failure has kept everything: neither needs accounting for.
+    """
+    try:
+        ledger.note_erasure(outcome=outcome, takes=takes, remaining=remaining)
+    except OSError as error:
+        yield Event("unlogged", detail=f"effacement non consigné : {error}")
+
+
 def erase_card(card, ledger: Ledger, verdict: CardVerdict, node,
                eraser=erase_over_hid, hasher=sha256_file,
                hidraw_lister=default_hidraw_lister) -> Iterator[Event]:
@@ -411,10 +432,14 @@ def erase_card(card, ledger: Ledger, verdict: CardVerdict, node,
         # is not a failure — a transmitter mid-reenumeration is the normal
         # end of an erase — so the count is simply reported as unknown.
         try:
-            yield Event("reinventoried", detail=str(len(_fresh_takes(card))))
+            remaining = len(_fresh_takes(card))
         except (OSError, ValueError, struct.error):
-            yield Event("reinventoried", detail=None)
+            remaining = None
+        yield from _note_erasure(ledger, "erased", verdict.takes, remaining)
+        yield Event("reinventoried",
+                    detail=None if remaining is None else str(remaining))
     elif result.verdict == UNKNOWN:
+        yield from _note_erasure(ledger, "unknown", verdict.takes, None)
         # Silence from the transmitter is not a failure: the command may well
         # have gone through, and conteur.erase.erase's own contract is that
         # the honest answer here is "re-read the card", not "it failed" —

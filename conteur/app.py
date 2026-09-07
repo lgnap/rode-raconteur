@@ -542,20 +542,30 @@ class MainWindow(QMainWindow):
             with device.block.open("rb") as fh:
                 card = Card(fh)
                 ledger = Ledger(card.serial)
+                # Carried rather than shown and forgotten: "unlogged" arrives
+                # before the line that reports the outcome, which would
+                # otherwise overwrite it. Both facts have to stay on screen —
+                # the card is gone, and nothing wrote that down.
+                unlogged = ""
                 for event in erase_card(card, ledger, verdict, device.hidraw):
                     if event.kind == "erased":
                         # The card no longer holds what the verdict describes;
                         # offering to erase it again would be nonsense.
                         self._snapshot.verdicts.pop(serial, None)
                         self._set_status(f"{serial} : carte effacée", sticky=True)
+                    elif event.kind == "unlogged":
+                        unlogged = f", {event.detail}"
+                        self._set_status(f"{serial} : carte effacée{unlogged}",
+                                         sticky=True)
                     elif event.kind == "reinventoried":
                         # What the card actually holds now, read back rather
                         # than assumed. Unreadable means mid-reenumeration,
                         # the normal end of an erase, not a failure.
                         found = ("état non relu" if event.detail is None
                                  else f"{event.detail} prise(s) restante(s)")
-                        self._set_status(f"{serial} : carte effacée, {found}",
-                                         sticky=True)
+                        self._set_status(
+                            f"{serial} : carte effacée, {found}{unlogged}",
+                            sticky=True)
                     elif event.kind == "refused":
                         self._set_status(f"{serial} : {event.detail}", sticky=True)
                     elif event.kind in ("failed", "unknown"):
@@ -564,7 +574,8 @@ class MainWindow(QMainWindow):
                         # undetermined, not that the erase failed, and
                         # event.detail (built by erase_card) already says so
                         # and already carries the serial, unlike "refused"'s.
-                        self._set_status(event.detail, sticky=True)
+                        self._set_status(f"{event.detail}{unlogged}",
+                                         sticky=True)
         except (OSError, ValueError) as error:
             # The card vanishing between resolution and open (unplugged, or a
             # transmitter mid-reenumeration from a previous erase) must not

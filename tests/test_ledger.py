@@ -175,3 +175,72 @@ def test_a_ledger_written_before_the_prefix_existed_is_still_read(tmp_path):
     rec = led.records()[0]
     assert rec.prefix == "2026-09-07_111030_00001_S"
     assert rec.folder == tmp_path
+
+
+def test_an_erasure_survives_a_reload(tmp_path):
+    """The only irreversible act of the app was also the only one that left
+    nothing behind the next day: the proof was the status line, and a status
+    line is gone as soon as the window is."""
+    led = Ledger("800A-F63E", root=tmp_path)
+    led.note_erasure(outcome="erased", takes=13, remaining=0, at=WHEN)
+    again = Ledger("800A-F63E", root=tmp_path).erasures()
+    assert [(e.outcome, e.takes, e.remaining, e.at) for e in again] \
+        == [("erased", 13, 0, WHEN)]
+
+
+def test_an_undetermined_erasure_is_recorded_as_such(tmp_path):
+    """Silence from the transmitter is exactly what one fails to remember.
+    An unrecorded attempt is indistinguishable from no attempt at all."""
+    led = Ledger("800A-F63E", root=tmp_path)
+    led.note_erasure(outcome="unknown", takes=3, remaining=None, at=WHEN)
+    (entry,) = Ledger("800A-F63E", root=tmp_path).erasures()
+    assert entry.outcome == "unknown"
+    assert entry.remaining is None
+
+
+def test_an_erasure_never_unlocks_erasing(tmp_path):
+    """The annexe authorises nothing. Were an erasure to reach `_records`,
+    a card would become erasable on the strength of having been erased."""
+    led = Ledger("800A-F63E", root=tmp_path)
+    led.note_erasure(outcome="erased", takes=13, remaining=0, at=WHEN)
+    assert not led.has("aa" * 32)
+    assert not led.erase_allowed(["aa" * 32])
+    assert Ledger("800A-F63E", root=tmp_path).records() == []
+
+
+def test_takes_and_erasures_live_side_by_side(tmp_path):
+    """Each writer must leave the other's half of the file alone: a proof of
+    copy dropped by an erasure entry would close the lock for ever."""
+    led = Ledger("800A-F63E", root=tmp_path)
+    record = _record(tmp_path, "00001_Source.WAV", 10)
+    led.add(record)
+    led.note_erasure(outcome="erased", takes=1, remaining=0, at=WHEN)
+    led.add(_record(tmp_path, "00002_Source.WAV", 20))
+    reloaded = Ledger("800A-F63E", root=tmp_path)
+    assert len(reloaded.records()) == 2
+    assert len(reloaded.erasures()) == 1
+    assert reloaded.has(record.digest)
+
+
+def test_a_ledger_written_before_erasures_existed_reads_as_none(tmp_path):
+    """Every card imported so far has one of these files. They must not
+    become unreadable, which would take their proofs down with them."""
+    (tmp_path / "800A-F63E.json").write_text(
+        json.dumps({"serial": "800A-F63E", "takes": []}), encoding="utf-8")
+    assert Ledger("800A-F63E", root=tmp_path).erasures() == []
+
+
+def test_a_malformed_erasure_entry_is_skipped_not_fatal(tmp_path):
+    """Same rule as a take: one bad entry must not cost the whole file."""
+    (tmp_path / "800A-F63E.json").write_text(json.dumps({
+        "serial": "800A-F63E", "takes": [],
+        "erasures": [
+            {"at": "not-a-date", "outcome": "erased", "takes": 1,
+             "remaining": 0},
+            {"outcome": "erased"},
+            {"at": WHEN.isoformat(), "outcome": "erased", "takes": 13,
+             "remaining": 0},
+        ],
+    }), encoding="utf-8")
+    kept = Ledger("800A-F63E", root=tmp_path).erasures()
+    assert [e.takes for e in kept] == [13]

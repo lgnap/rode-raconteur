@@ -312,3 +312,91 @@ def test_a_card_unreadable_after_the_erase_is_still_a_success(tmp_path):
                              hidraw_lister=_lister()))
     assert [e.kind for e in events] == ["erasing", "erased", "reinventoried"]
     assert events[-1].detail is None
+
+
+def _erase(card, led, takes, tmp_path, result=None):
+    """Drive one erase to completion, with everything else held valid."""
+    def eraser(node, **kwargs):
+        card.erased = True
+        return result if result is not None else EraseResult(
+            SUCCESS, list(range(0, 101, 5)))
+
+    return list(erase_card(card, led, _verdict(takes, ["aa" * 32]),
+                           Path("/dev/hidrawX"), eraser=eraser,
+                           hasher=_hasher("aa" * 32),
+                           hidraw_lister=_lister()))
+
+
+def test_a_successful_erase_is_written_down(tmp_path):
+    """The status line reporting it is gone as soon as the window is, and an
+    erase is the one act of the app nothing else records."""
+    takes = [_take()]
+    card, led = FakeCard(takes, after_erase=[]), _held(tmp_path)
+    _erase(card, led, takes, tmp_path)
+    (entry,) = Ledger("800A-F63E", root=tmp_path / "ledger").erasures()
+    assert (entry.outcome, entry.takes, entry.remaining) == ("erased", 1, 0)
+
+
+def test_an_erase_whose_card_could_not_be_re_read_records_no_count(tmp_path):
+    """Mid-reenumeration is the normal end of an erase. "Nobody looked" and
+    "the card was empty" must not be written down the same way."""
+    takes = [_take()]
+    led = _held(tmp_path)
+
+    class Vanishing(FakeCard):
+        def takes(self):
+            if self.erased:
+                raise OSError("no such device")
+            return list(self._takes)
+
+    _erase(Vanishing(takes), led, takes, tmp_path)
+    (entry,) = Ledger("800A-F63E", root=tmp_path / "ledger").erasures()
+    assert entry.outcome == "erased"
+    assert entry.remaining is None
+
+
+def test_an_undetermined_outcome_is_written_down_too(tmp_path):
+    """The whole point: silence from the transmitter is exactly what one
+    fails to remember the next day."""
+    takes = [_take()]
+    card, led = FakeCard(takes), _held(tmp_path)
+    _erase(card, led, takes, tmp_path, result=EraseResult(UNKNOWN, []))
+    (entry,) = Ledger("800A-F63E", root=tmp_path / "ledger").erasures()
+    assert (entry.outcome, entry.remaining) == ("unknown", None)
+
+
+def test_a_refusal_writes_nothing(tmp_path):
+    """Nothing was sent to the card, so there is nothing to account for."""
+    takes = [_take()]
+    card, led = FakeCard(takes), _held(tmp_path)
+    events = list(erase_card(card, led, _verdict(takes, ["aa" * 32],
+                                                 complete=False),
+                             Path("/dev/hidrawX"), eraser=None,
+                             hasher=_hasher("aa" * 32),
+                             hidraw_lister=_lister()))
+    assert [e.kind for e in events] == ["refused"]
+    assert Ledger("800A-F63E", root=tmp_path / "ledger").erasures() == []
+
+
+def test_a_device_reported_failure_writes_nothing(tmp_path):
+    """The transmitter answered, and it answered no: the card still holds
+    everything, and no irreversible act needs accounting for."""
+    takes = [_take()]
+    card, led = FakeCard(takes), _held(tmp_path)
+    _erase(card, led, takes, tmp_path, result=EraseResult(FAILED, []))
+    assert Ledger("800A-F63E", root=tmp_path / "ledger").erasures() == []
+
+
+def test_an_erase_that_cannot_be_written_down_is_still_an_erase(tmp_path):
+    """The card is erased whatever the disk says. Reporting a failed erase
+    would be a lie in the direction that gets a user to run it again."""
+    takes = [_take()]
+    card, led = FakeCard(takes, after_erase=[]), _held(tmp_path)
+
+    def refuse(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    led.note_erasure = refuse
+    events = _erase(card, led, takes, tmp_path)
+    assert [e.kind for e in events] == \
+        ["erasing", "erased", "unlogged", "reinventoried"]

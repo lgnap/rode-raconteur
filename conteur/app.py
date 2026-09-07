@@ -93,6 +93,7 @@ class ImportSnapshot:
         self._lock = threading.Lock()
         self.total = 0
         self.done = 0
+        self.skipped = 0
         self.failures = 0
         self.current: str | None = None
         self.finished = False
@@ -148,6 +149,7 @@ class ImportSnapshot:
                 self.done += 1
                 self.lines.append(f"{event.take} → importé")
             elif event.kind == "skipped":
+                self.skipped += 1
                 self.lines.append(f"{event.take} → déjà importé")
             elif event.kind == "failed":
                 self.failures += 1
@@ -160,11 +162,23 @@ class ImportSnapshot:
 
     def summary(self) -> str:
         with self._lock:
-            if self.finished:
-                tail = f", {self.failures} échec(s)" if self.failures else ""
-                return f"Récupération terminée : {self.done}/{self.total}{tail}"
-            where = f" — {self.current}" if self.current else ""
-            return f"{IMPORT_RUNNING} {self.done}/{self.total}{where}"
+            if not self.finished:
+                where = f" — {self.current}" if self.current else ""
+                return f"{IMPORT_RUNNING} {self.done}/{self.total}{where}"
+            # "0/8" reads like a failure. Finding nothing new is the ordinary
+            # outcome of a second run — the card has to be re-read every time,
+            # since a name is not an identity — and it deserves to be said as
+            # such rather than as a count that looks like a loss.
+            parts = []
+            if self.done:
+                parts.append(f"{self.done} importée(s)")
+            elif self.skipped:
+                parts.append("rien de nouveau")
+            if self.skipped:
+                parts.append(f"{self.skipped} déjà présente(s)")
+            if self.failures:
+                parts.append(f"{self.failures} échec(s)")
+            return "Récupération terminée : " + (", ".join(parts) or "rien à faire")
 
 
 class MainWindow(QMainWindow):
@@ -383,11 +397,16 @@ class MainWindow(QMainWindow):
         # the import thread that merely queued the path.
         for path in self._snapshot.drain_pending():
             self._submit_imported(path)
-        self._set_status(self._snapshot.summary())
-        if self._snapshot.is_finished():
-            self._import_timer.stop()
-            self._import_thread = None
-            self.refresh_device()
+        if not self._snapshot.is_finished():
+            self._set_status(self._snapshot.summary())
+            return
+        self._import_timer.stop()
+        self._import_thread = None
+        # refresh_device() first, then the outcome — and stickily. It rewrites
+        # the status every two seconds, so the result of an import that took
+        # minutes used to vanish before anyone read it.
+        self.refresh_device()
+        self._set_status(self._snapshot.summary(), sticky=True)
 
     def _start_model_loading(self) -> None:
         if self._model_loader is not None:

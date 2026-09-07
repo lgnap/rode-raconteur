@@ -27,6 +27,9 @@ def slugify(text: str, max_len: int = 60) -> str:
 SILENCE = "silence"
 NO_SPEECH = "sans-parole"
 UNNAMED = "sans-nom"
+# A take that was cut at its markers. It is named without being listened to:
+# its parts carry the content, and transcribing both is the same audio twice.
+SPLIT = "decoupee"
 
 # Where a take's name came from. These tokens are internal and stable: they
 # travel between `job.py`, `titler.py`, the queue and the UI, and the tests

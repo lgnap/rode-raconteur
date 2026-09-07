@@ -12,11 +12,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from conteur.bwf import chunks, started_at
+from conteur.bwf import chunks, cue_points, started_at
 from conteur.bwf import split as split_at_markers
 from conteur.card import VerificationError, copy_verified
 from conteur.ledger import Ledger, Record
-from conteur.naming import UNNAMED
+from conteur.naming import SPLIT, UNNAMED
 from conteur.paths import unique_path
 from conteur.signal import CAPTURE_RATE
 
@@ -32,7 +32,8 @@ def _stamp(when: datetime) -> str:
     return when.strftime("%Y-%m-%d_%H%M%S")
 
 
-def import_name(started: datetime, card_name: str) -> str:
+def import_name(started: datetime, card_name: str,
+                slug: str = UNNAMED) -> str:
     """`<start>_<name on the card>__<slug>.wav`.
 
     The start time sorts it with the takes recorded directly. The card name is
@@ -40,7 +41,7 @@ def import_name(started: datetime, card_name: str) -> str:
     00001 after an erase. The double underscore before the slug is the
     idempotence marker that tools/nommer-morceaux.py already relies on.
     """
-    return f"{_stamp(started)}_{Path(card_name).stem}__{UNNAMED}.wav"
+    return f"{_stamp(started)}_{Path(card_name).stem}__{slug}.wav"
 
 
 def part_name(started: datetime, card_name: str, index: int, total: int) -> str:
@@ -83,6 +84,21 @@ def _started(path: Path, take) -> datetime:
             frames = found["data"][1] // block_align
         return started_at(fh, closed_at=take.closed_at, rate=rate,
                           frames=frames)
+
+
+def _marked(path: Path) -> bool:
+    """Whether the take carries markers, read before it is named.
+
+    Read here rather than after splitting so the name is settled before the
+    ledger records the path — the ledger must never point at a name we are
+    about to change. A file we cannot parse simply has no markers; the split
+    that follows will report the real reason.
+    """
+    try:
+        with path.open("rb") as fh:
+            return bool(cue_points(fh))
+    except (OSError, ValueError, struct.error):
+        return False
 
 
 def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
@@ -145,9 +161,12 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
         # recopy for ever.
         try:
             started = _started(provisional, take)
+            marked = _marked(provisional)
             final_dir = dest_for(started)
             final_dir.mkdir(parents=True, exist_ok=True)
-            final = unique_path(final_dir, import_name(started, take.name))
+            final = unique_path(
+                final_dir, import_name(started, take.name,
+                                       SPLIT if marked else UNNAMED))
             provisional.rename(final)
         except (OSError, ValueError, struct.error) as error:
             yield Event("failed", take=take.name, detail=str(error))
@@ -180,13 +199,17 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
             for part in parts:
                 submit(part)
                 yield Event("submitted", take=part.name)
-        # The whole take is submitted even when it was split. It is still on
-        # disk — we never delete what we copied — and anything left carrying
-        # __sans-nom is by definition what orphan recovery hunts down at the
-        # next launch. Naming it now does that work at the moment we know it
-        # is needed, instead of deferring it to a startup scan that would
-        # surprise the user with a job they did not ask for.
-        submit(final)
-        yield Event("submitted", take=final.name)
+        else:
+            # Only a take that was NOT split is submitted. Naming a take and
+            # then its own parts transcribes the same audio twice: measured on
+            # real material, a 242 s take cut into six cost 484 s of a queue
+            # that runs one job at a time because two models will not fit in
+            # 8 GB of VRAM. A split take is named `decoupee` instead — it
+            # keeps a name, so orphan recovery leaves it alone, without
+            # anyone having to listen to it. A take whose split FAILED lands
+            # here too, and is submitted: it was never cut, so it deserves a
+            # real name.
+            submit(final)
+            yield Event("submitted", take=final.name)
 
     yield Event("done")

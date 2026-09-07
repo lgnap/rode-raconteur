@@ -39,7 +39,7 @@ def test_the_sequence_of_events_is_the_designed_order(tmp_path):
     led = Ledger("800A-F63E", root=tmp_path / "ledger")
     submitted = []
     events = list(intake(card, led, lambda when: tmp_path / "out",
-                         submitted.append, splitter=lambda path, out: []))
+                         submitted.append, splitter=lambda path, out, **kwargs: []))
     assert [e.kind for e in events] == [
         "inventory", "copy", "verified", "recorded", "submitted", "done",
     ]
@@ -47,14 +47,49 @@ def test_the_sequence_of_events_is_the_designed_order(tmp_path):
 
 
 def test_a_take_already_recorded_is_skipped(tmp_path):
+    """Same name *and* same bytes: the digest branch after the copy is what
+    recognises it. The copy still happens — it is the only way to know the
+    digest — so "copy" precedes "skipped", and no second file is left behind.
+    """
     card = FakeCard([_take("00001_Source.WAV")])
     led = Ledger("800A-F63E", root=tmp_path / "ledger")
     dest_for = lambda when: tmp_path / "out"
     list(intake(card, led, dest_for, lambda p: None,
-                splitter=lambda path, out: []))
+                splitter=lambda path, out, **kwargs: []))
     events = list(intake(card, led, dest_for, lambda p: None,
-                         splitter=lambda path, out: []))
-    assert [e.kind for e in events] == ["inventory", "skipped", "done"]
+                         splitter=lambda path, out, **kwargs: []))
+    assert [e.kind for e in events] == ["inventory", "copy", "skipped", "done"]
+    assert len(led.records()) == 1
+    assert len(list((tmp_path / "out").iterdir())) == 1
+
+
+def test_the_same_name_with_new_content_is_a_new_take(tmp_path):
+    """The counter restarts at 00001 after an erase, so the next card holds
+    names the ledger already knows, carrying takes it has never seen. Judging
+    on the name would discard a real story in silence and tell the user it was
+    already imported."""
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    dest_for = lambda when: tmp_path / "out"
+
+    first = FakeCard([_take("00001_Source.WAV")], content=b"the first story")
+    list(intake(first, led, dest_for, lambda p: None,
+                splitter=lambda path, out, **kwargs: []))
+    assert len(led.records()) == 1
+
+    # Erased, re-recorded: the counter is back to 00001 and the take under
+    # that name is a different one.
+    again = FakeCard([Take("00001_Source.WAV", len(b"a second story"), 3, WHEN)],
+                     content=b"a second story")
+    events = list(intake(again, led, dest_for, lambda p: None,
+                         splitter=lambda path, out, **kwargs: []))
+
+    kinds = [e.kind for e in events]
+    assert "skipped" not in kinds
+    assert kinds == ["inventory", "copy", "verified", "recorded", "submitted",
+                     "done"]
+    assert len(led.records()) == 2
+    assert len({r.digest for r in led.records()}) == 2
+    assert len(list((tmp_path / "out").iterdir())) == 2
 
 
 def test_a_failed_verification_stops_before_recording(tmp_path):
@@ -68,7 +103,7 @@ def test_a_failed_verification_stops_before_recording(tmp_path):
 
     events = list(intake(card, led, lambda when: tmp_path / "out",
                          lambda p: None, copier=refuse,
-                         splitter=lambda path, out: []))
+                         splitter=lambda path, out, **kwargs: []))
     kinds = [e.kind for e in events]
     assert kinds == ["inventory", "copy", "failed", "done"]
     assert "recorded" not in kinds
@@ -90,7 +125,7 @@ def test_a_failure_does_not_stop_the_following_takes(tmp_path):
 
     events = list(intake(card, led, lambda when: tmp_path / "out",
                          lambda p: None, copier=flaky,
-                         splitter=lambda path, out: []))
+                         splitter=lambda path, out, **kwargs: []))
     assert calls == ["00001_Source.WAV", "00002_Source.WAV"]
     assert [e.kind for e in events].count("recorded") == 1
 
@@ -103,7 +138,7 @@ def test_splitting_happens_after_recording_and_submits_the_parts(tmp_path):
     for p in parts:
         p.write_bytes(b"x")
     events = list(intake(card, led, lambda when: tmp_path / "out",
-                         submitted.append, splitter=lambda path, out: parts))
+                         submitted.append, splitter=lambda path, out, **kwargs: parts))
     kinds = [e.kind for e in events]
     assert kinds.index("recorded") < kinds.index("split")
     assert submitted == parts
@@ -117,7 +152,7 @@ def test_splitting_only_happens_once_the_record_has_landed(tmp_path):
     led = Ledger("800A-F63E", root=tmp_path / "ledger")
     seen_at_split = []
 
-    def splitter(path, out):
+    def splitter(path, out, **kwargs):
         seen_at_split.append(len(led.records()))
         return []
 
@@ -141,7 +176,7 @@ def test_the_stop_flag_is_honoured_between_takes(tmp_path):
         return "dd" * 32 if len(seen) == 1 else "ee" * 32
 
     list(intake(card, led, lambda when: tmp_path / "out", lambda p: None,
-                copier=counting, splitter=lambda path, out: [], stop=Stop()))
+                copier=counting, splitter=lambda path, out, **kwargs: [], stop=Stop()))
     assert seen == ["00001_Source.WAV"]
 
 
@@ -173,7 +208,7 @@ def test_dest_for_is_called_with_the_true_start_time(tmp_path):
     intake_module._started = fake_started
     try:
         events = list(intake(card, led, dest_for, lambda p: None,
-                             copier=copier, splitter=lambda path, out: []))
+                             copier=copier, splitter=lambda path, out, **kwargs: []))
     finally:
         intake_module._started = original
 
@@ -197,7 +232,7 @@ def test_the_same_content_under_a_new_name_is_skipped_not_recorded_twice(tmp_pat
 
     first_card = FakeCard([_take("00001_Source.WAV")])
     list(intake(first_card, led, lambda when: tmp_path / "out", lambda p: None,
-                copier=same_content, splitter=lambda path, out: []))
+                copier=same_content, splitter=lambda path, out, **kwargs: []))
     assert len(led.records()) == 1
     before = sorted(p.name for p in (tmp_path / "out").iterdir())
 
@@ -206,7 +241,7 @@ def test_the_same_content_under_a_new_name_is_skipped_not_recorded_twice(tmp_pat
     second_card = FakeCard([Take("00003_Other.WAV", 3, 3, WHEN)])
     events = list(intake(second_card, led, lambda when: tmp_path / "out",
                          lambda p: None, copier=same_content,
-                         splitter=lambda path, out: []))
+                         splitter=lambda path, out, **kwargs: []))
 
     assert [e.kind for e in events] == ["inventory", "copy", "skipped", "done"]
     assert len(led.records()) == 1

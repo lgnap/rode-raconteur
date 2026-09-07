@@ -83,15 +83,18 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
     """
     takes = card.takes()
     yield Event("inventory", detail=str(len(takes)))
-    digests: dict[str, str] = {r.card_name: r.digest for r in ledger.records()}
 
     for take in takes:
         if stop is not None and stop.is_set():
             break
-        if take.name in digests:
-            yield Event("skipped", take=take.name)
-            continue
 
+        # Every take is copied before it is judged, even one whose name the
+        # ledger already holds. There is no shortcut: a digest cannot be known
+        # without reading, and the name is not an identity — the counter
+        # restarts at 00001 after an erase, so the card comes back full of
+        # names already recorded, holding different takes. Skipping on the
+        # name would discard them all in silence and open the erase lock on
+        # their stale twins. Re-reading the card costs seconds.
         yield Event("copy", take=take.name)
         provisional_dir = dest_for(take.closed_at)
         provisional_dir.mkdir(parents=True, exist_ok=True)
@@ -114,7 +117,6 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
         provisional.rename(final)
         ledger.add(Record(digest=digest, card_name=take.name, size=take.size,
                           path=final, imported_at=datetime.now()))
-        digests[take.name] = digest
         yield Event("recorded", take=take.name, detail=str(final))
 
         parts = splitter(final, final.parent / final.stem)

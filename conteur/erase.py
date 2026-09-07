@@ -6,8 +6,10 @@ so the kernel turns it into a SET_REPORT on the control pipe. It works; a
 failure will surface as a control-transfer error rather than a bulk one.
 """
 
+import errno
 import os
 import select
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -72,20 +74,27 @@ def erase(node_path: Path, opener=default_opener,
     """
     node = opener(node_path)
     percents: list[int] = []
-    idle = 0.0
+    last_report = time.monotonic()
     try:
         node.write(ERASE_COMMAND)
         while True:
             try:
                 data = node.read()
             except TimeoutError:
-                idle += 0.5
-                if idle >= idle_timeout_s:
+                elapsed = time.monotonic() - last_report
+                if elapsed >= idle_timeout_s:
                     return EraseResult(UNKNOWN, percents)
                 continue
-            except OSError:
-                return EraseResult(REENUMERATED if percents else FAILED, percents)
-            idle = 0.0
+            except OSError as e:
+                # Only treat as device disappearance if errno indicates that.
+                if e.errno in (errno.ENODEV, errno.ENXIO, errno.EIO):
+                    return EraseResult(REENUMERATED if percents else FAILED, percents)
+                # Transient errors like EAGAIN or EINTR should be retried like timeouts.
+                if e.errno in (errno.EAGAIN, errno.EINTR):
+                    continue
+                # Unknown error: propagate it rather than silently converting to a verdict.
+                raise
+            last_report = time.monotonic()
             if len(data) < 4 or data[0] != REPLY_ID or data[1] != OPCODE:
                 continue
             status, value = data[2], data[3]

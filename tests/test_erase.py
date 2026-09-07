@@ -1,5 +1,7 @@
 """The vendor HID erase, and the four ways it can end."""
 
+import errno
+import pytest
 from pathlib import Path
 
 from conteur.erase import (
@@ -8,14 +10,21 @@ from conteur.erase import (
 
 
 class FakeNode:
-    """Replays what a transmitter answers. Reading None means it vanished."""
+    """Replays what a transmitter answers. Reading None means it vanished.
 
-    def __init__(self, replies):
+    Replies can be bytes, None, or an exception instance to raise.
+    """
+
+    def __init__(self, replies, write_raises=None):
         self.replies = list(replies)
         self.written = []
+        self.write_raises = write_raises
+        self.closed = False
 
     def write(self, data):
         self.written.append(data)
+        if self.write_raises:
+            raise self.write_raises
         return len(data)
 
     def read(self):
@@ -23,11 +32,13 @@ class FakeNode:
             raise TimeoutError
         reply = self.replies.pop(0)
         if reply is None:
-            raise OSError(19, "No such device")
+            raise OSError(errno.ENODEV, "No such device")
+        if isinstance(reply, Exception):
+            raise reply
         return reply
 
     def close(self):
-        pass
+        self.closed = True
 
 
 def _progress(*percents):
@@ -81,3 +92,44 @@ def test_silence_is_unknown_not_failure():
 def test_unrelated_reports_are_ignored():
     node = FakeNode([bytes([0x0B]) + bytes(60)] + _progress(*range(0, 101, 5)))
     assert erase(Path("/dev/hidraw6"), opener=lambda _: node).verdict == SUCCESS
+
+
+def test_transient_read_error_is_retried_not_reported_as_success():
+    """BlockingIOError (EAGAIN) is a transient error, not device disappearance.
+    The node still works after the error, so erase should continue and succeed."""
+    transient = BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")
+    node = FakeNode(
+        [_progress(0, 5, 10)[0], transient] + _progress(*range(15, 101, 5))
+    )
+    result = erase(Path("/dev/hidraw6"), opener=lambda _: node)
+    assert result.verdict == SUCCESS
+    assert result.percents[0] == 0 and result.percents[-1] == 100
+
+
+def test_device_disappearance_is_distinguished_from_transient_error():
+    """OSError with ENODEV errno is a real disappearance, not a transient error."""
+    node = FakeNode(_progress(0, 5, 10) + [OSError(errno.ENODEV, "No such device")])
+    result = erase(Path("/dev/hidraw6"), opener=lambda _: node)
+    assert result.verdict == REENUMERATED
+    assert result.percents == [0, 5, 10]
+
+
+def test_unclassified_read_error_is_propagated():
+    """An OSError we don't recognize as device disappearance should propagate,
+    not be silently converted into a verdict."""
+    unknown_error = OSError(errno.EACCES, "Permission denied")
+    node = FakeNode(_progress(0, 5) + [unknown_error])
+    with pytest.raises(OSError) as exc_info:
+        erase(Path("/dev/hidraw6"), opener=lambda _: node)
+    assert exc_info.value.errno == errno.EACCES
+    assert node.closed
+
+
+def test_write_error_propagates_and_closes():
+    """An error from write() should propagate and the node must still be closed."""
+    write_error = IOError("Write failed")
+    node = FakeNode([], write_raises=write_error)
+    with pytest.raises(IOError) as exc_info:
+        erase(Path("/dev/hidraw6"), opener=lambda _: node)
+    assert str(exc_info.value) == "Write failed"
+    assert node.closed

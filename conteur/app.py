@@ -104,6 +104,17 @@ class ImportSnapshot:
         with self._lock:
             self._pending.append(path)
 
+    def record_failure(self, line: str) -> None:
+        """A whole-card failure: counted and kept, like a single take's.
+
+        Routed through the lock like every other mutation of `.lines`, and
+        counted in `.failures` so it also reaches the finished summary — the
+        only place a failure surfaces on the status line.
+        """
+        with self._lock:
+            self.failures += 1
+            self.lines.append(line)
+
     def drain_pending(self) -> list:
         """Take ownership of the paths queued since the last drain."""
         with self._lock:
@@ -303,24 +314,32 @@ class MainWindow(QMainWindow):
         snapshot = self._snapshot
 
         def run():
-            for device in cards:                 # one card at a time: reading
-                try:                             # two at once is slower
-                    with device.block.open("rb") as fh:
-                        card = Card(fh)
-                        ledger = Ledger(card.serial)
-                        # queue_submit only records the path; it must not call
-                        # into Qt, since this closure runs on the import
-                        # thread. _refresh_import hands each one to
-                        # _submit_imported from the GUI thread instead.
-                        for event in intake(card, ledger, destination_dir,
-                                            snapshot.queue_submit, stop=stop):
-                            snapshot.absorb(event)
-                except (OSError, ValueError) as error:
-                    # A card that vanishes mid-import, or one whose boot
-                    # sector no longer parses as FAT32, is reported, and the
-                    # next one is still attempted.
-                    snapshot.lines.append(f"{device.block} : {error}")
-            snapshot.finished = True
+            try:
+                for device in cards:              # one card at a time: reading
+                    try:                          # two at once is slower
+                        with device.block.open("rb") as fh:
+                            card = Card(fh)
+                            ledger = Ledger(card.serial)
+                            # queue_submit only records the path; it must not
+                            # call into Qt, since this closure runs on the
+                            # import thread. _refresh_import hands each one to
+                            # _submit_imported from the GUI thread instead.
+                            for event in intake(card, ledger, destination_dir,
+                                                snapshot.queue_submit, stop=stop):
+                                snapshot.absorb(event)
+                    except BaseException as error:      # noqa: BLE001 - never a silent dead thread
+                        # A card that vanishes mid-import, one whose boot
+                        # sector no longer parses as FAT32, or any other
+                        # failure inside intake() (a malformed provisional
+                        # file breaking _started()'s struct.unpack, say) is
+                        # reported, and the next card is still attempted.
+                        snapshot.record_failure(f"{device.block} : {error}")
+            finally:
+                # Whatever happens above, the GUI thread must be told to stop
+                # polling and re-enable the button. Without this, an
+                # unanticipated failure leaves the status stuck on
+                # "Récupération en cours…" forever, with nobody watching.
+                snapshot.finished = True
 
         self._import_thread = threading.Thread(target=run, daemon=True)
         self._import_thread.start()

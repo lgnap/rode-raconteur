@@ -1,3 +1,4 @@
+import io
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -8,6 +9,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication
 
+import conteur.app as app_mod
 from conteur.app import MainWindow
 
 
@@ -983,3 +985,378 @@ def test_a_failure_is_counted_and_kept(qapp):
     win._snapshot.absorb(Event("failed", take="a.wav", detail="mismatch"))
     assert win._snapshot.failures == 1
     assert "a.wav" in win._snapshot.lines[-1]
+
+
+# --- start_import(): the riskiest part of this file, exercised for real
+# (a real threading.Thread, fakes throughout, no hardware, no real QTimer --
+# _refresh_import is called directly, exactly like _refresh_level already is).
+
+def _wav_bytes(value=1):
+    """A minimal, real, mono WAV -- enough for bwf.chunks/split to parse it
+    without raising, unlike arbitrary bytes."""
+    import io
+    import wave
+
+    import numpy as np
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(48000)
+        w.writeframes(np.array([value, value, value], dtype="int16").tobytes())
+    return buf.getvalue()
+
+
+class _FakeBlock:
+    """Stands in for StorageDevice.block: a Path whose .open() is read."""
+
+    def __init__(self, data=b"\x00" * 512):
+        self._data = data
+
+    def open(self, mode):
+        import io
+
+        return io.BytesIO(self._data)
+
+    def __str__(self):
+        return "/dev/fake"
+
+
+class _RecordingFile(io.BytesIO):
+    """Like _FakeBlock's file, but tells `order` when it is closed."""
+
+    def __init__(self, data, order, label):
+        super().__init__(data)
+        self._order = order
+        self._label = label
+
+    def __exit__(self, *exc):
+        self._order.append(("close", self._label))
+        return super().__exit__(*exc)
+
+
+class _RecordingBlock:
+    """Stands in for StorageDevice.block; records when it is opened/closed,
+    so a test can tell whether two cards were read one after another or
+    overlapped."""
+
+    def __init__(self, order, label, data=b"\x00" * 512):
+        self._order = order
+        self._label = label
+        self._data = data
+
+    def open(self, mode):
+        self._order.append(("open", self._label))
+        return _RecordingFile(self._data, self._order, self._label)
+
+    def __str__(self):
+        return f"/dev/{self._label}"
+
+
+def _patch_intake_plumbing(monkeypatch, tmp_path, card_cls):
+    """Point app.py's Card/Ledger/destination_dir at fakes and a scratch
+    ledger, exactly what a real import needs, none of it touching hardware."""
+    from conteur.ledger import Ledger
+
+    monkeypatch.setattr(app_mod, "Card", card_cls)
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path / "dest")
+    monkeypatch.setattr(
+        app_mod, "Ledger",
+        lambda serial: Ledger(serial, root=tmp_path / "ledger"),
+    )
+
+
+def test_take_submission_always_happens_on_the_gui_thread(qapp, tmp_path, monkeypatch):
+    """queue_submit only records a path; handing it to the naming queue --
+    add_take mutates a QListWidget -- must happen on the GUI thread, from
+    _refresh_import, never inside the import thread itself."""
+    import threading
+    from datetime import datetime
+
+    import conteur.app as app_mod
+    from conteur.card import Take
+    from conteur.devices import StorageDevice
+
+    when = datetime(2026, 9, 7, 11, 14, 32)
+
+    class FakeCard:
+        serial = "800A-F63E"
+
+        def __init__(self, fh):
+            pass
+
+        def takes(self):
+            return [Take("00001_A.WAV", 3, 3, when), Take("00002_A.WAV", 3, 3, when)]
+
+        def stream(self, take, chunk=1 << 20):
+            yield _wav_bytes(1 if take.name.startswith("00001") else 2)
+
+    class FakeQueue:
+        def start(self):
+            pass
+
+        def submit(self, path, when, on_done):
+            pass
+
+    _patch_intake_plumbing(monkeypatch, tmp_path, FakeCard)
+
+    win = MainWindow(find_rx=lambda: None, queue=FakeQueue(), find_storage=list)
+    win._cards = [StorageDevice("800A-F63E", _FakeBlock(), None, True)]
+
+    main_thread = threading.current_thread()
+    threads_seen = []
+    original = win._submit_imported
+
+    def spy(path, _orig=original):
+        threads_seen.append(threading.current_thread())
+        return _orig(path)
+
+    win._submit_imported = spy
+
+    win.start_import()
+    win._import_thread.join(5)
+    win._refresh_import()
+
+    assert win._snapshot.finished
+    assert win._snapshot.done == 2
+    assert len(threads_seen) == 2
+    assert all(t is main_thread for t in threads_seen)
+
+
+def test_two_cards_are_cumulative_and_finished_only_after_the_second(
+    qapp, tmp_path, monkeypatch,
+):
+    """Pins the two bugs found in review: a second card's inventory must add
+    to the first's `total`, and `finished` must not flip after the first
+    card's own "done" event while a second card is still queued."""
+    from datetime import datetime
+
+    import conteur.app as app_mod
+    from conteur.card import Take
+    from conteur.devices import StorageDevice
+
+    when = datetime(2026, 9, 7, 11, 14, 32)
+
+    class FakeQueue:
+        def start(self):
+            pass
+
+        def submit(self, path, when, on_done):
+            pass
+
+    class Card1:
+        serial = "AAAA-0001"
+
+        def __init__(self, fh):
+            pass
+
+        def takes(self):
+            return [Take("00001_A.WAV", 3, 3, when)]
+
+        def stream(self, take, chunk=1 << 20):
+            yield _wav_bytes(1)
+
+    class Card2:
+        serial = "BBBB-0002"
+
+        def __init__(self, fh):
+            pass
+
+        def takes(self):
+            return [Take("00001_B.WAV", 3, 3, when), Take("00002_B.WAV", 3, 3, when)]
+
+        def stream(self, take, chunk=1 << 20):
+            yield _wav_bytes(2 if take.name.startswith("00001") else 3)
+
+    made = iter([Card1, Card2])
+    monkeypatch.setattr(app_mod, "Card", lambda fh: next(made)(fh))
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path / "dest")
+    from conteur.ledger import Ledger
+    monkeypatch.setattr(
+        app_mod, "Ledger", lambda serial: Ledger(serial, root=tmp_path / "ledger"),
+    )
+
+    win = MainWindow(find_rx=lambda: None, queue=FakeQueue(), find_storage=list)
+    win._cards = [
+        StorageDevice("AAAA-0001", _FakeBlock(), None, True),
+        StorageDevice("BBBB-0002", _FakeBlock(), None, True),
+    ]
+
+    win.start_import()
+    win._import_thread.join(5)
+    win._refresh_import()
+
+    assert win._snapshot.total == 3   # 1 + 2, not replaced by the second card
+    assert win._snapshot.done == 3    # the run did not stop after card 1's "done"
+    assert win._snapshot.finished
+
+
+def test_cards_are_read_one_after_another_not_overlapped(qapp, tmp_path, monkeypatch):
+    from datetime import datetime
+
+    import conteur.app as app_mod
+    from conteur.card import Take
+    from conteur.devices import StorageDevice
+
+    when = datetime(2026, 9, 7, 11, 14, 32)
+    order: list = []
+
+    class FakeCard:
+        def __init__(self, fh):
+            self.serial = "shared"
+
+        def takes(self):
+            return [Take("00001_X.WAV", 3, 3, when)]
+
+        def stream(self, take, chunk=1 << 20):
+            yield _wav_bytes(1)
+
+    class FakeQueue:
+        def start(self):
+            pass
+
+        def submit(self, path, when, on_done):
+            pass
+
+    monkeypatch.setattr(app_mod, "Card", FakeCard)
+    monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path / "dest")
+    from conteur.ledger import Ledger
+    counter = iter(["one", "two"])
+    monkeypatch.setattr(
+        app_mod, "Ledger",
+        lambda serial: Ledger(next(counter), root=tmp_path / "ledger"),
+    )
+
+    win = MainWindow(find_rx=lambda: None, queue=FakeQueue(), find_storage=list)
+    win._cards = [
+        StorageDevice("one", _RecordingBlock(order, "one"), None, True),
+        StorageDevice("two", _RecordingBlock(order, "two"), None, True),
+    ]
+
+    win.start_import()
+    win._import_thread.join(5)
+    win._refresh_import()
+
+    assert order == [("open", "one"), ("close", "one"), ("open", "two"), ("close", "two")]
+
+
+def test_shutdown_stops_an_import_in_flight_and_does_not_outlive_the_window(
+    qapp, tmp_path, monkeypatch,
+):
+    import threading
+    from datetime import datetime
+
+    import conteur.app as app_mod
+    from conteur.card import Take
+    from conteur.devices import StorageDevice
+
+    when = datetime(2026, 9, 7, 11, 14, 32)
+    started = threading.Event()
+    hold = threading.Event()
+
+    class HoldingCard:
+        serial = "800A-F63E"
+
+        def __init__(self, fh):
+            pass
+
+        def takes(self):
+            return [Take("00001_A.WAV", 3, 3, when)]
+
+        def stream(self, take, chunk=1 << 20):
+            started.set()
+            hold.wait(5)  # released by the test itself, below
+            yield _wav_bytes(1)
+
+    class FakeQueue:
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def join(self, timeout_s):
+            pass
+
+        def submit(self, path, when, on_done):
+            pass
+
+    _patch_intake_plumbing(monkeypatch, tmp_path, HoldingCard)
+
+    win = MainWindow(find_rx=lambda: None, queue=FakeQueue(), find_storage=list)
+    win._cards = [StorageDevice("800A-F63E", _FakeBlock(), None, True)]
+    win.start_import()
+
+    assert started.wait(2), "the import thread never reached the copy"
+    thread = win._import_thread
+
+    # A short timeout: shutdown() must not hang waiting for a copy that is
+    # deliberately still blocked.
+    win.shutdown(timeout_s=0.2)
+    assert win._import_stop.is_set()
+    assert win._import_thread is None
+
+    # Release the blocked copy and confirm the thread genuinely terminates --
+    # it must not be left running past the window's own shutdown.
+    hold.set()
+    thread.join(5)
+    assert not thread.is_alive()
+
+
+def test_a_card_that_fails_to_open_does_not_stop_the_next_one(
+    qapp, tmp_path, monkeypatch,
+):
+    """Anything escaping intake() -- not just OSError/ValueError -- must be
+    caught, reported, and must not stop the next card or leave `finished`
+    unset (the Important-1 review finding)."""
+    from datetime import datetime
+
+    import conteur.app as app_mod
+    from conteur.card import Take
+    from conteur.devices import StorageDevice
+
+    when = datetime(2026, 9, 7, 11, 14, 32)
+
+    class FailingBlock:
+        def open(self, mode):
+            raise RuntimeError("boom")  # deliberately not OSError/ValueError
+
+        def __str__(self):
+            return "/dev/broken"
+
+    class GoodCard:
+        serial = "800A-F63E"
+
+        def __init__(self, fh):
+            pass
+
+        def takes(self):
+            return [Take("00001_A.WAV", 3, 3, when)]
+
+        def stream(self, take, chunk=1 << 20):
+            yield _wav_bytes(1)
+
+    class FakeQueue:
+        def start(self):
+            pass
+
+        def submit(self, path, when, on_done):
+            pass
+
+    _patch_intake_plumbing(monkeypatch, tmp_path, GoodCard)
+
+    win = MainWindow(find_rx=lambda: None, queue=FakeQueue(), find_storage=list)
+    win._cards = [
+        StorageDevice("broken", FailingBlock(), None, True),
+        StorageDevice("800A-F63E", _FakeBlock(), None, True),
+    ]
+
+    win.start_import()
+    win._import_thread.join(5)
+    win._refresh_import()
+
+    assert win._snapshot.finished
+    assert any("boom" in line for line in win._snapshot.lines)
+    assert win._snapshot.failures == 1
+    assert win._snapshot.done == 1     # the second, good card was still imported

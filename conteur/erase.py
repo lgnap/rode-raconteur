@@ -20,6 +20,7 @@ OPCODE = 0x4A
 ACK = 0x41
 NACK = 0x4E
 COMPLETE = 100
+RETRY_PAUSE_S = 0.01  # Sleep on transient errors to avoid busy-looping
 
 SUCCESS = "complete"
 REENUMERATED = "reenumerated"
@@ -74,27 +75,32 @@ def erase(node_path: Path, opener=default_opener,
     """
     node = opener(node_path)
     percents: list[int] = []
-    last_report = time.monotonic()
+    deadline = time.monotonic() + idle_timeout_s
     try:
         node.write(ERASE_COMMAND)
         while True:
+            # Check idle timeout at the top of every iteration, regardless of which
+            # path we take. This ensures no path can hang or busy-loop indefinitely.
+            if time.monotonic() >= deadline:
+                return EraseResult(UNKNOWN, percents)
             try:
                 data = node.read()
             except TimeoutError:
-                elapsed = time.monotonic() - last_report
-                if elapsed >= idle_timeout_s:
-                    return EraseResult(UNKNOWN, percents)
                 continue
-            except OSError as e:
+            except OSError as error:
                 # Only treat as device disappearance if errno indicates that.
-                if e.errno in (errno.ENODEV, errno.ENXIO, errno.EIO):
+                if error.errno in (errno.ENODEV, errno.ENXIO, errno.EIO):
                     return EraseResult(REENUMERATED if percents else FAILED, percents)
-                # Transient errors like EAGAIN or EINTR should be retried like timeouts.
-                if e.errno in (errno.EAGAIN, errno.EINTR):
+                # Transient errors like EAGAIN or EINTR should be retried, but with
+                # a small pause to avoid busy-looping on persistent failures.
+                if error.errno in (errno.EAGAIN, errno.EINTR):
+                    time.sleep(RETRY_PAUSE_S)
                     continue
                 # Unknown error: propagate it rather than silently converting to a verdict.
                 raise
-            last_report = time.monotonic()
+            # Reset deadline only when a report actually arrives, so silence is silence
+            # whatever produced it.
+            deadline = time.monotonic() + idle_timeout_s
             if len(data) < 4 or data[0] != REPLY_ID or data[1] != OPCODE:
                 continue
             status, value = data[2], data[3]

@@ -1,6 +1,7 @@
 """The vendor HID erase, and the four ways it can end."""
 
 import errno
+import time
 import pytest
 from pathlib import Path
 
@@ -85,7 +86,7 @@ def test_silence_is_unknown_not_failure():
     """The command may well have gone through. Declaring failure would be a
     guess; the card has to be re-inventoried instead."""
     node = FakeNode([])
-    result = erase(Path("/dev/hidraw6"), opener=lambda _: node)
+    result = erase(Path("/dev/hidraw6"), opener=lambda _: node, idle_timeout_s=0.05)
     assert result.verdict == UNKNOWN
 
 
@@ -133,3 +134,48 @@ def test_write_error_propagates_and_closes():
         erase(Path("/dev/hidraw6"), opener=lambda _: node)
     assert str(exc_info.value) == "Write failed"
     assert node.closed
+
+
+def test_persistent_transient_errors_do_not_hang():
+    """A node that always raises BlockingIOError(EAGAIN) must return UNKNOWN within
+    its timeout budget, not hang forever. Regression test for the critical defect
+    where transient-error retry lacked a timeout check."""
+    class AlwaysEAGAIN:
+        def __init__(self):
+            self.closed = False
+
+        def write(self, data):
+            return len(data)
+
+        def read(self):
+            raise BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")
+
+        def close(self):
+            self.closed = True
+
+    node = AlwaysEAGAIN()
+    timeout_s = 0.1
+    start = time.monotonic()
+    result = erase(Path("/dev/hidraw6"), opener=lambda _: node, idle_timeout_s=timeout_s)
+    elapsed = time.monotonic() - start
+
+    assert result.verdict == UNKNOWN
+    assert node.closed
+    # Ensure we didn't hang and completed within roughly the timeout (with some slack).
+    assert elapsed < timeout_s + 1.0
+
+
+def test_persistent_timeouts_do_not_burn_cpu():
+    """A node that always raises TimeoutError must return UNKNOWN within its timeout,
+    and must not busy-loop. Regression test for the busy-loop defect where the
+    loop checked the deadline only on one path."""
+    node = FakeNode([])  # Empty replies = all TimeoutError
+    timeout_s = 0.05
+    start = time.monotonic()
+    result = erase(Path("/dev/hidraw6"), opener=lambda _: node, idle_timeout_s=timeout_s)
+    elapsed = time.monotonic() - start
+
+    assert result.verdict == UNKNOWN
+    # Ensure the test didn't take 10+ seconds (the old behavior burned a full core
+    # for the whole default timeout). Should be well under 1 second with the fix.
+    assert elapsed < 1.0

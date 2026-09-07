@@ -1,0 +1,683 @@
+<title>Wireless PRO sur Fedora</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+:root{
+  --ground:#EDF0EF;
+  --surface:#FFFFFF;
+  --sunk:#E3E8E7;
+  --ink:#121A19;
+  --muted:#576764;
+  --faint:#859894;
+  --line:#CDD6D4;
+  --line-soft:#DFE6E4;
+  --audio:#0F6F63;
+  --audio-soft:#D3E7E3;
+  --tc:#B4531A;
+  --tc-soft:#F3DFD1;
+  --ok:#2C6E49;
+  --warn:#8A5A00;
+  --bad:#A32E22;
+  --code-bg:#F3F6F5;
+
+  --f-disp:"IBM Plex Sans Condensed","Helvetica Neue",Arial,sans-serif;
+  --f-body:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+  --f-mono:"IBM Plex Mono","SF Mono",Menlo,Consolas,monospace;
+
+  --w:70rem;
+  --read:39rem;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0F1514;
+    --surface:#161E1D;
+    --sunk:#1B2422;
+    --ink:#E4EBE9;
+    --muted:#9AACA8;
+    --faint:#6E807C;
+    --line:#2A3634;
+    --line-soft:#212B29;
+    --audio:#4FBEAC;
+    --audio-soft:#173029;
+    --tc:#E08B52;
+    --tc-soft:#33210F;
+    --ok:#5FBF87;
+    --warn:#D6A03C;
+    --bad:#E2705F;
+    --code-bg:#101817;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0F1514;
+  --surface:#161E1D;
+  --sunk:#1B2422;
+  --ink:#E4EBE9;
+  --muted:#9AACA8;
+  --faint:#6E807C;
+  --line:#2A3634;
+  --line-soft:#212B29;
+  --audio:#4FBEAC;
+  --audio-soft:#173029;
+  --tc:#E08B52;
+  --tc-soft:#33210F;
+  --ok:#5FBF87;
+  --warn:#D6A03C;
+  --bad:#E2705F;
+  --code-bg:#101817;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--f-body);
+  font-size:16px;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.page{max-width:var(--w);margin:0 auto;padding:0 1.5rem 6rem}
+
+/* ---------- en-tete ---------- */
+header.masthead{
+  padding:3.5rem 0 1.75rem;
+  border-bottom:2px solid var(--ink);
+  display:flex;flex-direction:column;gap:1.1rem;
+}
+.eyebrow{
+  font-family:var(--f-mono);font-size:.7rem;font-weight:500;
+  letter-spacing:.13em;text-transform:uppercase;color:var(--muted);
+}
+h1{
+  font-family:var(--f-disp);font-weight:700;
+  font-size:clamp(2.4rem,6vw,3.9rem);line-height:1.02;
+  letter-spacing:-.018em;margin:0;text-wrap:balance;
+}
+.standfirst{
+  font-size:1.1rem;color:var(--muted);max-width:34rem;margin:0;
+  text-wrap:pretty;
+}
+.specs{
+  display:flex;flex-wrap:wrap;gap:.4rem .55rem;
+  font-family:var(--f-mono);font-size:.72rem;
+  padding-top:.4rem;
+}
+.specs span{
+  border:1px solid var(--line);border-radius:2px;
+  padding:.16rem .5rem;color:var(--muted);background:var(--surface);
+}
+
+/* ---------- verdict ---------- */
+.verdict{
+  margin-top:2.25rem;
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));
+  gap:1px;background:var(--line);border:1px solid var(--line);
+}
+.verdict > div{background:var(--surface);padding:1.15rem 1.25rem;display:flex;flex-direction:column;gap:.3rem}
+.verdict dt{
+  font-family:var(--f-mono);font-size:.68rem;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--muted);
+}
+.verdict dd{margin:0;font-family:var(--f-disp);font-size:1.55rem;font-weight:700;line-height:1.15;letter-spacing:-.01em}
+.verdict p{margin:0;font-size:.86rem;color:var(--muted);line-height:1.45}
+.v-ok dd{color:var(--ok)}
+.v-no dd{color:var(--bad)}
+.v-tc dd{color:var(--tc)}
+
+/* ---------- sections ---------- */
+section{padding-top:3.4rem}
+h2{
+  font-family:var(--f-disp);font-weight:700;
+  font-size:1.85rem;letter-spacing:-.012em;margin:0 0 .2rem;
+  text-wrap:balance;
+}
+h2 .num{
+  font-family:var(--f-mono);font-size:.78rem;font-weight:500;
+  color:var(--muted);letter-spacing:.1em;display:block;margin-bottom:.45rem;
+}
+h3{
+  font-family:var(--f-body);font-weight:600;font-size:1.02rem;
+  margin:2rem 0 .5rem;letter-spacing:-.005em;
+}
+p,ul,ol{max-width:var(--read)}
+p{margin:0 0 1rem}
+ul,ol{margin:0 0 1rem;padding-left:1.15rem}
+li{margin-bottom:.42rem}
+a{color:var(--audio);text-decoration-thickness:1px;text-underline-offset:2px}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--audio);outline-offset:3px;border-radius:2px}
+strong{font-weight:600}
+code{
+  font-family:var(--f-mono);font-size:.86em;
+  background:var(--code-bg);border:1px solid var(--line-soft);
+  border-radius:2px;padding:.06em .32em;
+}
+.lede{font-size:1.03rem}
+
+/* ---------- blocs terminal ---------- */
+.term{
+  margin:1.25rem 0 1.5rem;border:1px solid var(--line);
+  background:var(--code-bg);border-radius:3px;overflow:hidden;
+}
+.term-h{
+  display:flex;justify-content:space-between;align-items:baseline;gap:1rem;
+  padding:.42rem .8rem;border-bottom:1px solid var(--line-soft);
+  font-family:var(--f-mono);font-size:.68rem;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);background:var(--surface);
+}
+.term pre{
+  margin:0;padding:.85rem .8rem;overflow-x:auto;
+  font-family:var(--f-mono);font-size:.79rem;line-height:1.62;
+  tab-size:2;
+}
+.term code{background:none;border:0;padding:0;font-size:inherit}
+.hl-a{color:var(--audio);font-weight:500}
+.hl-t{color:var(--tc);font-weight:500}
+.hl-x{color:var(--bad);font-weight:500}
+.dim{color:var(--faint)}
+
+/* ---------- tableaux ---------- */
+.tw{overflow-x:auto;margin:1.3rem 0 1.5rem;border:1px solid var(--line);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.87rem;min-width:34rem}
+th,td{text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--line-soft);vertical-align:top}
+thead th{
+  font-family:var(--f-mono);font-size:.67rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);font-weight:500;
+  border-bottom:1px solid var(--line);white-space:nowrap;
+}
+tbody tr:last-child td{border-bottom:0}
+td.mono,th.mono{font-family:var(--f-mono);font-size:.8rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pill{
+  display:inline-block;font-family:var(--f-mono);font-size:.68rem;
+  letter-spacing:.05em;padding:.1rem .42rem;border-radius:2px;
+  border:1px solid currentColor;white-space:nowrap;
+}
+.pill-yes{color:var(--ok)}
+.pill-no{color:var(--bad)}
+.pill-half{color:var(--warn)}
+
+/* ---------- panneaux mesure ---------- */
+.panel{
+  margin:1.5rem 0;border:1px solid var(--line);background:var(--surface);
+  padding:1.35rem 1.4rem 1.15rem;
+}
+.panel > h3:first-child{margin-top:0}
+.panel figcaption{
+  font-size:.79rem;color:var(--muted);line-height:1.5;
+  margin-top:.7rem;padding-top:.7rem;border-top:1px solid var(--line-soft);
+  max-width:44rem;
+}
+figure{margin:0}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.svg-scroll{overflow-x:auto}
+
+/* comparatif canaux */
+.chans{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));
+  gap:1px;background:var(--line);border:1px solid var(--line);margin:1.4rem 0;
+}
+.chan{background:var(--surface);padding:1.1rem 1.2rem}
+.chan-h{display:flex;align-items:center;gap:.5rem;margin-bottom:.85rem}
+.chan-dot{width:.62rem;height:.62rem;border-radius:50%;flex:none}
+.chan-l .chan-dot{background:var(--audio)}
+.chan-r .chan-dot{background:var(--tc)}
+.chan-h b{font-family:var(--f-disp);font-size:1.12rem;letter-spacing:-.005em}
+.chan-h span{font-family:var(--f-mono);font-size:.68rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-left:auto}
+.metrics{display:grid;grid-template-columns:1fr auto;gap:.3rem .9rem;font-size:.84rem;align-items:baseline}
+.metrics dt{color:var(--muted)}
+.metrics dd{margin:0;font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-weight:500}
+.chan-l .metrics dd{color:var(--audio)}
+.chan-r .metrics dd{color:var(--tc)}
+.chan-note{margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--line-soft);font-size:.81rem;color:var(--muted);line-height:1.5}
+
+/* topologie */
+.tree{
+  font-family:var(--f-mono);font-size:.79rem;line-height:1.75;
+  background:var(--code-bg);border:1px solid var(--line);
+  padding:1rem 1.1rem;overflow-x:auto;margin:1.3rem 0;
+}
+.tree .lbl{color:var(--muted)}
+
+/* encadres */
+.callout{
+  border-left:3px solid var(--warn);background:var(--surface);
+  border-top:1px solid var(--line);border-right:1px solid var(--line);
+  border-bottom:1px solid var(--line);
+  padding:1rem 1.2rem;margin:1.5rem 0;
+}
+.callout h3{margin:0 0 .35rem;font-size:.94rem}
+.callout p{margin:0;font-size:.9rem;color:var(--muted);max-width:44rem}
+.callout.trap{border-left-color:var(--bad)}
+.callout.note{border-left-color:var(--audio)}
+
+/* recette */
+.steps{counter-reset:s;list-style:none;padding:0;margin:1.3rem 0;max-width:none}
+.steps > li{
+  counter-increment:s;position:relative;padding-left:2.4rem;margin-bottom:1.4rem;
+}
+.steps > li::before{
+  content:counter(s,decimal-leading-zero);position:absolute;left:0;top:.05rem;
+  font-family:var(--f-mono);font-size:.76rem;font-weight:600;color:var(--tc);
+  letter-spacing:.04em;
+}
+.steps h3{margin:0 0 .3rem;font-size:.97rem}
+.steps p{max-width:var(--read)}
+.steps .term{margin-bottom:.4rem}
+
+footer{
+  margin-top:4.5rem;padding-top:1.4rem;border-top:1px solid var(--line);
+  font-size:.82rem;color:var(--muted);display:flex;flex-wrap:wrap;
+  gap:.5rem 1.5rem;justify-content:space-between;
+}
+footer p{margin:0;max-width:44rem}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:640px){
+  .page{padding:0 1.1rem 4rem}
+  header.masthead{padding-top:2.4rem}
+}
+</style>
+
+<div class="page">
+
+<header class="masthead">
+  <div class="eyebrow">Journal de diagnostic · 6 septembre 2026</div>
+  <h1>Wireless PRO sur Fedora</h1>
+  <p class="standfirst">Faire tourner RODE Central sous Wine, puis découvrir que le récepteur ne transporte pas ce qu'on croyait sur son canal droit.</p>
+  <div class="specs">
+    <span>Fedora · noyau 7.1.12-200.fc44</span>
+    <span>Bottles 67.1 (flatpak)</span>
+    <span>runner soda-11.0-7</span>
+    <span>win64 / win10</span>
+    <span>RØDE Wireless PRO · firmware 1.0.2</span>
+  </div>
+</header>
+
+<dl class="verdict">
+  <div class="v-ok">
+    <dt>RODE Central sous Wine</dt>
+    <dd>Fonctionnel</dd>
+    <p>4 appareils détectés, après deux correctifs indépendants qui devaient être appliqués ensemble.</p>
+  </div>
+  <div class="v-ok">
+    <dt>RX comme carte son</dt>
+    <dd>Oui</dd>
+    <p>24 bits / 48 kHz, pris en charge nativement par <code>snd-usb-audio</code>, exposé par PipeWire.</p>
+  </div>
+  <div class="v-no">
+    <dt>TX comme micro USB</dt>
+    <dd>Jamais</dd>
+    <p>Aucune interface audio dans leurs descripteurs, quel que soit le mode de connexion.</p>
+  </div>
+  <div class="v-tc">
+    <dt>Canal droit du RX</dt>
+    <dd>Timecode SMPTE</dd>
+    <p>LTC 24 img/s décodé, calé sur l'heure du jour. Ce n'est pas de l'audio.</p>
+  </div>
+</dl>
+
+<section>
+  <h2><span class="num">Partie I — L'accès HID</span>Pourquoi l'application ne voyait aucun appareil</h2>
+
+  <p class="lede">RODE Central démarrait sans erreur dans sa bouteille et affichait une liste d'appareils vide. Le réflexe — chercher du côté de l'audio USB — est une impasse : l'application ne parle pas aux micros par l'audio, mais par un <strong>canal HID propriétaire</strong>, les nœuds <code>/dev/hidrawN</code>.</p>
+
+  <p>Deux verrous indépendants bloquaient ce canal. Corriger l'un sans l'autre ne produit aucun changement visible, ce qui rend le diagnostic trompeur si on les teste séparément.</p>
+
+  <h3>Verrou 1 — permissions noyau</h3>
+  <p>Les quatre nœuds HID des appareils RØDE appartenaient à <code>root</code> en mode <code>0600</code>. Wine s'exécute sous le compte de l'utilisateur : chaque tentative d'ouverture renvoyait <code>EACCES</code>.</p>
+
+  <div class="term">
+    <div class="term-h"><span>Avant correction</span><span>ls -l /dev/hidraw{9..12}</span></div>
+<pre><code><span class="hl-x">crw-------</span>  241,  9 root  /dev/hidraw9    <span class="dim">RØDE Charge Case+</span>
+<span class="hl-x">crw-------</span>  241, 10 root  /dev/hidraw10   <span class="dim">Wireless PRO TX</span>
+<span class="hl-x">crw-------</span>  241, 11 root  /dev/hidraw11   <span class="dim">Wireless PRO RX</span>
+<span class="hl-x">crw-------</span>  241, 12 root  /dev/hidraw12   <span class="dim">Wireless PRO TX</span></code></pre>
+  </div>
+
+  <p>La correction passe par une règle udev utilisant <code>uaccess</code> : <code>systemd-logind</code> pose alors une ACL sur l'utilisateur physiquement connecté à la session. C'est préférable à un groupe <code>plugdev</code> — pas de groupe à créer, pas de reconnexion nécessaire, et l'accès disparaît proprement quand la session se ferme.</p>
+
+  <div class="term">
+    <div class="term-h"><span>/etc/udev/rules.d/70-rode.rules</span><span>créé</span></div>
+<pre><code><span class="dim"># Nœuds /dev/hidrawN</span>
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="19f7", MODE="0660", <span class="hl-a">TAG+="uaccess"</span>
+
+<span class="dim"># Nœuds /dev/bus/usb/... (libusb, mises à jour firmware)</span>
+SUBSYSTEM=="usb", ATTR{idVendor}=="19f7", MODE="0660", <span class="hl-a">TAG+="uaccess"</span></code></pre>
+  </div>
+
+  <div class="callout trap">
+    <h3>Le piège du rechargement</h3>
+    <p>La commande évidente pour appliquer la règle aux appareils déjà branchés, <code>udevadm trigger --attr-match=idVendor=19f7</code>, ne sélectionne <em>aucun</em> nœud hidraw : <code>--attr-match</code> ne teste que les attributs propres du périphérique, or <code>idVendor</code> vit sur le parent USB. La règle, elle, est correcte — elle utilise <code>ATTRS</code>, qui remonte la chaîne. Il faut cibler les chemins sysfs : <code>udevadm trigger --action=add /sys/class/hidraw/hidrawN</code>.</p>
+  </div>
+
+  <h3>Verrou 2 — exposition à Wine</h3>
+  <p>Même accessibles, les nœuds ne sont pas présentés à l'application : le pilote <code>winebus.sys</code> n'expose en HID brut que les appareils explicitement autorisés. Bottles gère cela par le champ <code>hidraw_devices</code> de la bouteille, qu'il traduit en variable d'environnement pour le runner.</p>
+
+  <div class="term">
+    <div class="term-h"><span>bottle.yml → environnement du runner</span><span>Parameters.hidraw_devices</span></div>
+<pre><code>hidraw_devices:
+  - 0x19F7/0x0056   <span class="dim"># Wireless PRO TX</span>
+  - 0x19F7/0x0058   <span class="dim"># Wireless PRO RX</span>
+  - 0x19F7/0x007A   <span class="dim"># Charge Case+</span>
+  - 0x19F7/0x007C   <span class="dim"># Charge Case+ (stockage)</span>
+
+<span class="dim">↓ backend/wine/winecommand.py · apply_hidraw_preferences()</span>
+
+<span class="hl-a">PROTON_ENABLE_HIDRAW</span>=0x19F7/0x0056,0x19F7/0x0058,0x19F7/0x007A,0x19F7/0x007C</code></pre>
+  </div>
+
+  <div class="callout">
+    <h3>Ce réglage n'a rien à voir avec le bac à sable</h3>
+    <p>Dans l'interface de Bottles, la liste des appareils HIDRAW est rangée sous l'onglet <em>Sandbox</em>. C'est trompeur : le code la lit inconditionnellement, que le bac à sable soit actif ou non. Ici il était désactivé, et le réglage était malgré tout indispensable.</p>
+  </div>
+
+  <h3>Vérification</h3>
+  <p>La preuve n'est pas que l'application « a l'air de marcher », mais que le processus qui héberge le bus HID de Wine tient réellement les descripteurs ouverts :</p>
+
+  <div class="term">
+    <div class="term-h"><span>readlink /proc/&lt;pid winedevice.exe&gt;/fd/*</span><span>après correction</span></div>
+<pre><code>PID 27971 → <span class="hl-a">/dev/hidraw9</span>    PID 27971 → <span class="hl-a">/dev/hidraw11</span>
+PID 27971 → <span class="hl-a">/dev/hidraw10</span>   PID 27971 → <span class="hl-a">/dev/hidraw12</span></code></pre>
+  </div>
+
+  <p>Côté application : <strong>Devices (4)</strong>, avec les noms personnalisés lus depuis les émetteurs eux-mêmes, l'état de charge et la version de firmware. L'énumération fonctionne de bout en bout.</p>
+</section>
+
+<section>
+  <h2><span class="num">Partie II — Cartographie</span>Qui expose de l'audio, et dans quelles conditions</h2>
+
+  <p class="lede">La question « peut-on utiliser le micro comme carte son sous Linux » n'a pas une réponse mais quatre, selon l'appareil et la façon dont il est relié. Tout se lit dans les classes d'interface USB déclarées.</p>
+
+  <div class="tw">
+    <table>
+      <thead>
+        <tr><th>Appareil</th><th class="mono">PID</th><th>Interfaces déclarées</th><th>Carte son</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>RX</strong> branché seul, en direct</td>
+          <td class="mono">19f7:0058</td>
+          <td class="mono">HID + AudioControl + <span class="hl-a">AudioStreaming</span> + <span class="dim">ff</span></td>
+          <td><span class="pill pill-yes">oui</span></td>
+        </tr>
+        <tr>
+          <td>RX en direct, mauvais mode</td>
+          <td class="mono">19f7:0058</td>
+          <td class="mono">HID + AudioControl <span class="dim">seul</span></td>
+          <td><span class="pill pill-half">carte sans flux</span></td>
+        </tr>
+        <tr>
+          <td><strong>TX</strong> branché en direct</td>
+          <td class="mono">19f7:0056</td>
+          <td class="mono">HID + Mass Storage</td>
+          <td><span class="pill pill-no">non</span></td>
+        </tr>
+        <tr>
+          <td>RX ou TX dans le Charge Case</td>
+          <td class="mono">0058 / 0056</td>
+          <td class="mono">HID seul</td>
+          <td><span class="pill pill-no">non</span></td>
+        </tr>
+        <tr>
+          <td>Charge Case+</td>
+          <td class="mono">19f7:007a<br>19f7:007c</td>
+          <td class="mono">HID<br>Mass Storage</td>
+          <td><span class="pill pill-no">non</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><strong>Les émetteurs ne sont pas des micros USB.</strong> Branchés en direct ils exposent leur HID de configuration et un volume de stockage d'environ 29 Go en FAT, étiqueté <code>RODE Wireless PRO</code> — leurs enregistrements embarqués. Aucune interface de classe audio, dans aucun mode observé.</p>
+
+  <h3>Le piège de la boîte de charge</h3>
+  <p>Quand les modules sont rangés dans le Charge Case, ils apparaissent bien sur le bus USB — mais à travers deux concentrateurs internes au boîtier, et en mode configuration uniquement. Un <code>lsusb</code> qui affiche cinq appareils RØDE peut donc parfaitement correspondre à zéro périphérique audio disponible.</p>
+
+  <div class="tree">
+<span class="lbl">1-1</span>      1a86:8091  USB HUB          <span class="lbl">← concentrateur du Charge Case</span>
+├─ <span class="lbl">1-1.1</span>   19f7:007a  Charge Case+     <span class="lbl">HID</span>
+├─ <span class="lbl">1-1.2</span>   1a86:8091  USB HUB          <span class="lbl">← baie de charge</span>
+│   ├─ <span class="lbl">1-1.2.2</span>  19f7:0058  RX          <span class="lbl">HID seul</span>
+│   ├─ <span class="lbl">1-1.2.3</span>  19f7:0056  TX          <span class="lbl">HID seul</span>
+│   └─ <span class="lbl">1-1.2.4</span>  19f7:0056  TX          <span class="lbl">HID seul</span>
+└─ <span class="lbl">1-1.4</span>   19f7:007c  Charge Case+     <span class="lbl">Mass Storage</span></div>
+
+  <div class="callout trap">
+    <h3>Une carte son sans aucun flux</h3>
+    <p>Le RX peut énumérer avec une interface <strong>AudioControl</strong> mais sans <strong>AudioStreaming</strong>. ALSA crée alors bien une carte, visible dans <code>/proc/asound/cards</code>, dotée d'un <code>usbmixer</code> — mais avec zéro périphérique PCM, donc absente de <code>arecord -l</code>. Ce symptôme contradictoire fait perdre du temps du côté d'ALSA ou de PipeWire, alors qu'il s'agit d'un mode de l'appareil : rien ne se règle côté système tant que le descripteur ne publie pas d'endpoint.</p>
+  </div>
+
+  <div class="term">
+    <div class="term-h"><span>Le RX une fois dans le bon mode</span><span>arecord -l · wpctl status</span></div>
+<pre><code>card 3: RX [Wireless PRO RX], device 0: USB Audio
+  → <span class="hl-a">hw:RX,0</span>   S24_3LE   48000 Hz   2 canaux
+
+Sources:  * 85. Wireless PRO RX Analog Stereo   [vol: 1.00]
+node.name = alsa_input.usb-R__DE_Wireless_PRO_RX_801FA234-01.analog-stereo</code></pre>
+  </div>
+
+  <p>Aucun pilote à installer : c'est de l'USB Audio Class standard. PipeWire le sélectionne même comme source par défaut, donc il est utilisable immédiatement dans OBS, Audacity ou un navigateur.</p>
+
+  <div class="callout">
+    <h3>Le gain ne se règle pas depuis Linux</h3>
+    <p>La carte n'expose aucun contrôle de volume ni de coupure — le seul élément présenté est <code>Capture Channel Map</code>. Le niveau doit donc être ajusté sur l'appareil lui-même ou dans RODE Central.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">Partie III — La surprise</span>Le canal droit ne contient pas de son</h2>
+
+  <p class="lede">Un premier enregistrement montrait un canal gauche très faible et un canal droit à −1 dBFS, à un cheveu de l'écrêtage. L'interprétation naturelle — une voix saturée — était fausse. Les statistiques de forme d'onde ne laissent aucun doute.</p>
+
+  <div class="chans">
+    <div class="chan chan-l">
+      <div class="chan-h"><span class="chan-dot"></span><b>Canal gauche</b><span>audio</span></div>
+      <dl class="metrics">
+        <dt>Facteur de crête</dt><dd>6,55</dd>
+        <dt>Plancher de bruit</dt><dd>−69,6 dBFS</dd>
+        <dt>Pics</dt><dd>−22,6 dBFS</dd>
+        <dt>Dynamique</dt><dd>47,0 dB</dd>
+        <dt>Fréquence dominante</dt><dd>122 Hz</dd>
+        <dt>|x| &gt; 0,8 × pic</dt><dd>0,0 %</dd>
+      </dl>
+      <p class="chan-note">Un facteur de crête élevé et une dynamique large sont la signature d'un signal acoustique. <strong>222 bouffées transitoires</strong> de 5 à 90 ms ont été détectées pendant un test de frappe au clavier.</p>
+    </div>
+    <div class="chan chan-r">
+      <div class="chan-h"><span class="chan-dot"></span><b>Canal droit</b><span>timecode</span></div>
+      <dl class="metrics">
+        <dt>Facteur de crête</dt><dd>1,03</dd>
+        <dt>Niveau RMS</dt><dd>−1,2 dBFS</dd>
+        <dt>Pics</dt><dd>−1,0 dBFS</dd>
+        <dt>Dynamique</dt><dd>≈ 0 dB</dd>
+        <dt>Valeurs distinctes</dt><dd>5</dd>
+        <dt>|x| &gt; 0,8 × pic</dt><dd>93,7 %</dd>
+      </dl>
+      <p class="chan-note">Un facteur de crête de 1,03 est celui d'une onde carrée parfaite ; la parole dépasse 4. Avec cinq valeurs distinctes sur tout le fichier, c'est un signal binaire à pleine échelle, pas du son.</p>
+    </div>
+  </div>
+
+  <figure class="panel">
+    <h3>Occupation de l'échelle numérique</h3>
+    <div class="svg-scroll">
+      <svg viewBox="0 0 600 168" role="img" aria-label="Comparaison des niveaux : le canal gauche occupe de −69,6 à −22,6 dBFS, le canal droit reste collé à −1 dBFS.">
+        <g font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)">
+          <text x="90" y="150" text-anchor="middle">−80</text>
+          <text x="210" y="150" text-anchor="middle">−60</text>
+          <text x="330" y="150" text-anchor="middle">−40</text>
+          <text x="450" y="150" text-anchor="middle">−20</text>
+          <text x="570" y="150" text-anchor="middle">0</text>
+          <text x="330" y="164" text-anchor="middle" fill="var(--faint)">dBFS</text>
+        </g>
+        <g stroke="var(--line-soft)" stroke-width="1">
+          <line x1="90" y1="28" x2="90" y2="132"></line>
+          <line x1="210" y1="28" x2="210" y2="132"></line>
+          <line x1="330" y1="28" x2="330" y2="132"></line>
+          <line x1="450" y1="28" x2="450" y2="132"></line>
+        </g>
+        <line x1="570" y1="24" x2="570" y2="136" stroke="var(--bad)" stroke-width="1.5" stroke-dasharray="3 3"></line>
+        <text x="566" y="20" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--bad)">écrêtage</text>
+
+        <g font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="var(--ink)">
+          <text x="80" y="55" text-anchor="end">Canal G</text>
+          <text x="80" y="103" text-anchor="end">Canal D</text>
+        </g>
+
+        <rect x="152" y="40" width="282" height="22" fill="var(--audio-soft)" stroke="var(--audio)" stroke-width="1.5"></rect>
+        <text x="293" y="55" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--audio)">47 dB de dynamique</text>
+
+        <rect x="556" y="88" width="14" height="22" fill="var(--tc-soft)" stroke="var(--tc)" stroke-width="1.5"></rect>
+        <text x="548" y="103" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--tc)">saturé en permanence · 0,2 dB</text>
+      </svg>
+    </div>
+    <figcaption>Le canal audio respire sur une plage de 47 dB. Le canal timecode occupe une bande de 0,2 dB collée au maximum : il n'a aucune dynamique parce qu'il n'en a pas besoin — un signal binaire n'a que deux états.</figcaption>
+  </figure>
+
+  <h3>Décodage</h3>
+  <p>L'histogramme des intervalles entre transitions révèle exactement deux durées, dans un rapport de deux : environ 520 µs et 260 µs. C'est le codage <strong>biphase mark</strong> du timecode SMPTE, où chaque bit commence par une transition et où un <code>1</code> en ajoute une seconde au milieu.</p>
+
+  <figure class="panel">
+    <h3>Mot de synchronisation, tel qu'il est transmis</h3>
+    <div class="svg-scroll">
+      <svg id="ltc" viewBox="0 0 440 132" role="img" aria-label="Forme d'onde biphase mark du mot de synchronisation LTC 0011111111111101."></svg>
+    </div>
+    <figcaption>Les seize derniers bits de chaque trame forment un motif fixe, <code>0011111111111101</code>, que rien d'autre ne peut produire dans le flux. C'est lui qui permet de repérer le début des trames. Les bits à <code>1</code> se reconnaissent à leur transition supplémentaire au milieu du bit.</figcaption>
+  </figure>
+
+  <div class="term">
+    <div class="term-h"><span>Décodage LTC · enregistrement de 20 s</span><span>python + numpy</span></div>
+<pre><code>intervalles :  24-26 éch (520 µs) ×8210     <span class="dim">bit plein</span>
+               12-13 éch (260 µs) ×6612     <span class="dim">demi-bit</span>
+
+débit       :  <span class="hl-t">1920 bit/s</span> ÷ 80 bits par trame = <span class="hl-t">24,00 images/s</span>
+trames LTC valides : <span class="hl-t">479</span>
+
+   10:27:42:05
+   10:27:42:06
+   10:27:42:07
+        ⋮
+   10:28:02:03
+
+478 images sur 20 s → 23,90 img/s  <span class="dim">— aucune image perdue</span></code></pre>
+  </div>
+
+  <p>Le timecode est <strong>calé sur l'heure du jour</strong> : <code>10:27:42</code> correspond à l'horodatage réel du fichier. Et il continue de défiler sans interruption pendant que le canal gauche capte la frappe au clavier — les deux pistes sont bien simultanées et indépendantes.</p>
+
+  <div class="callout note">
+    <h3>Conséquence pratique</h3>
+    <p>Une application qui enregistre ce périphérique en stéréo capture donc du son à gauche et un signal de synchronisation à droite. Pour un usage courant — visioconférence, prise de son simple — il faut extraire le canal gauche en mono, sans quoi le timecode se retrouve dans le mixage à pleine échelle.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">Partie IV — Reproduire</span>La procédure complète</h2>
+
+  <ol class="steps">
+    <li>
+      <h3>Autoriser l'accès aux nœuds HID</h3>
+      <p>Créer la règle udev, la recharger, puis l'appliquer aux appareils déjà branchés en ciblant les chemins sysfs.</p>
+      <div class="term">
+        <div class="term-h"><span>root</span><span>une seule fois</span></div>
+<pre><code>udevadm control --reload-rules
+udevadm trigger --action=add /sys/class/hidraw/hidraw{9..12}
+udevadm settle</code></pre>
+      </div>
+      <p>Attendu : <code>crw-rw----+</code> — le <code>+</code> final signale l'ACL, et <code>CURRENT_TAGS</code> doit contenir <code>uaccess</code>.</p>
+    </li>
+    <li>
+      <h3>Exposer les appareils à Wine</h3>
+      <p>Renseigner les identifiants au format <code>0xVVVV/0xPPPP</code> dans <code>hidraw_devices</code>, bouteille fermée pour que Bottles ne réécrive pas le fichier.</p>
+    </li>
+    <li>
+      <h3>Vérifier avant de conclure</h3>
+      <p>Contrôler que le processus <code>winedevice.exe</code> tient réellement les descripteurs, plutôt que de se fier à l'affichage de l'application.</p>
+      <div class="term">
+        <div class="term-h"><span>vérification</span><span>utilisateur</span></div>
+<pre><code>readlink /proc/$(pgrep -f winedevice.exe | tail -1)/fd/* | grep hidraw</code></pre>
+      </div>
+    </li>
+    <li>
+      <h3>Pour l'audio, sortir le RX du boîtier</h3>
+      <p>Le brancher seul en direct, hors du Charge Case et hors du dock. Confirmer la présence de l'interface AudioStreaming avant de chercher plus loin.</p>
+      <div class="term">
+        <div class="term-h"><span>diagnostic express</span><span>utilisateur</span></div>
+<pre><code>arecord -l | grep RX          <span class="dim"># vide = pas de flux, quel que soit /proc/asound/cards</span>
+arecord -D hw:RX,0 -f S24_3LE -r 48000 -c 2 -d 5 test.wav</code></pre>
+      </div>
+    </li>
+  </ol>
+
+  <div class="callout">
+    <h3>Ce qui n'a pas été vérifié</h3>
+    <p>Le cycle complet après redémarrage n'a pas été testé : la règle udev est persistante par construction, mais un branchement à froid n'a pas été observé. Par ailleurs, le réglage exact de l'appareil qui fait apparaître l'interface AudioStreaming n'a pas été isolé — le mode timecode a été modifié entre deux mesures sans que la manipulation précise soit consignée.</p>
+  </div>
+</section>
+
+<footer>
+  <p>Diagnostic mené sur matériel réel : chaque conclusion s'appuie sur une mesure reproductible — descripteurs USB, descripteurs de fichiers ouverts, enregistrement audio analysé. Les deux fausses pistes rencontrées en chemin sont documentées volontairement.</p>
+  <p class="eyebrow">6 septembre 2026</p>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  var svg = document.getElementById('ltc');
+  if(!svg) return;
+  var bits = [0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,1];
+  var x0 = 18, w = 25, top = 26, bot = 74, mid = (top+bot)/2;
+  var lvl = 1, x = x0, pts = [[x, lvl>0?top:bot]];
+  function to(nx){ pts.push([nx, lvl>0?top:bot]); }
+  function flip(nx){ lvl = -lvl; pts.push([nx, lvl>0?top:bot]); }
+  var NS = 'http://www.w3.org/2000/svg';
+  var frag = document.createDocumentFragment();
+
+  bits.forEach(function(b, i){
+    var bx = x;
+    // separateur de bit
+    var sep = document.createElementNS(NS,'line');
+    sep.setAttribute('x1', bx); sep.setAttribute('x2', bx);
+    sep.setAttribute('y1', top-7); sep.setAttribute('y2', bot+7);
+    sep.setAttribute('stroke','var(--line-soft)'); sep.setAttribute('stroke-width','1');
+    frag.appendChild(sep);
+    if(b === 1){
+      x += w/2; to(x); flip(x);
+      x += w/2; to(x); flip(x);
+    } else {
+      x += w;   to(x); flip(x);
+    }
+    // etiquette du bit
+    var t = document.createElementNS(NS,'text');
+    t.setAttribute('x', bx + w/2); t.setAttribute('y', bot + 22);
+    t.setAttribute('text-anchor','middle');
+    t.setAttribute('font-family','IBM Plex Mono, monospace');
+    t.setAttribute('font-size','11.5');
+    t.setAttribute('font-weight', b ? '600' : '400');
+    t.setAttribute('fill', b ? 'var(--tc)' : 'var(--muted)');
+    t.textContent = String(b);
+    frag.appendChild(t);
+  });
+
+  var endSep = document.createElementNS(NS,'line');
+  endSep.setAttribute('x1', x); endSep.setAttribute('x2', x);
+  endSep.setAttribute('y1', top-7); endSep.setAttribute('y2', bot+7);
+  endSep.setAttribute('stroke','var(--line-soft)');
+  frag.appendChild(endSep);
+
+  var poly = document.createElementNS(NS,'polyline');
+  poly.setAttribute('points', pts.map(function(p){return p[0]+','+p[1];}).join(' '));
+  poly.setAttribute('fill','none');
+  poly.setAttribute('stroke','var(--tc)');
+  poly.setAttribute('stroke-width','2');
+  poly.setAttribute('stroke-linejoin','miter');
+
+  var cap = document.createElementNS(NS,'text');
+  cap.setAttribute('x', x0); cap.setAttribute('y', bot + 44);
+  cap.setAttribute('font-family','IBM Plex Mono, monospace');
+  cap.setAttribute('font-size','10.5');
+  cap.setAttribute('fill','var(--faint)');
+  cap.textContent = '520 µs par bit · 1920 bit/s · 80 bits par trame';
+
+  svg.appendChild(frag);
+  svg.appendChild(poly);
+  svg.appendChild(cap);
+  svg.setAttribute('viewBox', '0 0 ' + (x + 18) + ' 132');
+})();
+</script>

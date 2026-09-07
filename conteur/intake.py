@@ -14,7 +14,9 @@ from pathlib import Path
 
 from conteur.bwf import chunks, cue_points, started_at
 from conteur.bwf import split as split_at_markers
-from conteur.card import VerificationError, copy_verified
+from conteur.card import VerificationError, copy_verified, sha256_file
+from conteur.erase import REENUMERATED, SUCCESS
+from conteur.erase import erase as erase_over_hid
 from conteur.ledger import Ledger, Record, name_prefix
 from conteur.naming import SPLIT, UNNAMED
 from conteur.paths import unique_path
@@ -261,3 +263,38 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
         complete=len(seen) == len(takes),
     ))
     yield Event("done")
+
+
+def erase_card(card, ledger: Ledger, verdict: CardVerdict, node,
+               eraser=erase_over_hid, hasher=sha256_file) -> Iterator[Event]:
+    """Erase one card, and only if it is still safe to.
+
+    Three things must hold, and each is checked here rather than trusted:
+    the import must have accounted for every take; the ledger must still find
+    an intact local twin for every digest; and the card must hold exactly what
+    the import saw. A transmitter can leave the case, record, and come back
+    between the import and the click, which would make the verdict stale.
+
+    Re-reading the directory is cheap and sound here only: no erase has
+    happened in between, so no name has been recycled.
+    """
+    if node is None:
+        yield Event("refused", detail="aucun nœud HID pour cet appareil")
+        return
+    if not verdict.complete:
+        yield Event("refused", detail="toutes les prises n'ont pas été copiées")
+        return
+    if inventory_of(card.takes()) != verdict.inventory:
+        yield Event("refused",
+                    detail="la carte a changé depuis la récupération")
+        return
+    if not ledger.erase_allowed(verdict.digests, hasher=hasher):
+        yield Event("refused", detail="une copie manque ou a changé")
+        return
+
+    yield Event("erasing", detail=verdict.serial)
+    result = eraser(node)
+    if result.verdict in (SUCCESS, REENUMERATED):
+        yield Event("erased", detail=verdict.serial)
+    else:
+        yield Event("failed", detail=f"{verdict.serial} : {result.verdict}")

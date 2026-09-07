@@ -1400,3 +1400,34 @@ def test_a_card_that_fails_to_open_does_not_stop_the_next_one(
     assert any("boom" in line for line in win._snapshot.lines)
     assert win._snapshot.failures == 1
     assert win._snapshot.done == 1     # the second, good card was still imported
+
+
+def test_the_import_outcome_survives_the_device_poll(qapp):
+    """The device poll fires every two seconds and used to wipe the summary,
+    so the outcome of a minutes-long import was never read by anyone."""
+    from conteur.intake import Event
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    for event in [Event("inventory", detail="2"), Event("recorded", take="a.wav"),
+                  Event("skipped", take="b.wav")]:
+        win._snapshot.absorb(event)
+    win._snapshot.mark_finished()
+    win._refresh_import()
+    assert "Récupération terminée" in win.status_label.text(), \
+        win.status_label.text()
+    win.refresh_device()
+    assert "Récupération terminée" in win.status_label.text(), \
+        "the device poll wiped the outcome"
+
+
+def test_the_summary_tells_new_from_already_imported(qapp):
+    """"0/8" reads like a failure. Nothing new is not the same as nothing done."""
+    from conteur.intake import Event
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    for event in [Event("inventory", detail="8")] + [
+            Event("skipped", take=f"{i}.wav") for i in range(8)]:
+        win._snapshot.absorb(event)
+    win._snapshot.mark_finished()
+    text = win._snapshot.summary()
+    assert "8" in text and "rien de nouveau" in text.lower(), text

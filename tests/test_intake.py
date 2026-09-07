@@ -27,6 +27,23 @@ class FakeCard:
         yield self.content
 
 
+def _marked_wav(markers=(4800,)) -> bytes:
+    """A minimal BWF carrying cue points, so intake sees a marked take."""
+    import struct as _s
+    fmt = _s.pack("<HHIIHH", 3, 1, 48000, 48000 * 4, 4, 32)
+    cue = _s.pack("<I", len(markers))
+    for i, pos in enumerate(markers, 1):
+        cue += _s.pack("<II4sIII", i, pos, b"data", 0, 0, pos)
+    data = b"\x00" * 64
+
+    def chunk(cid, payload):
+        pad = b"\x00" if len(payload) & 1 else b""
+        return cid + _s.pack("<I", len(payload)) + payload + pad
+
+    body = b"WAVE" + chunk(b"fmt ", fmt) + chunk(b"cue ", cue) + chunk(b"data", data)
+    return b"RIFF" + _s.pack("<I", len(body)) + body
+
+
 def _take(name, size=3):
     return Take(name, size, 3, WHEN)
 
@@ -145,12 +162,11 @@ def test_splitting_happens_after_recording_and_submits_the_parts(tmp_path):
                          submitted.append, splitter=lambda path, out, **kwargs: parts))
     kinds = [e.kind for e in events]
     assert kinds.index("recorded") < kinds.index("split")
-    # The whole take is submitted too: it stays on disk, and anything left
-    # carrying __sans-nom would otherwise be picked up by orphan recovery at
-    # the next launch anyway.
-    assert submitted[:2] == parts
-    assert submitted[2].name.endswith("__sans-nom.wav")
-    assert len(submitted) == 3
+    # Only the parts. The whole take was cut, so submitting it as well would
+    # transcribe the same audio twice on a queue that runs one job at a time.
+    # It keeps a name of its own — `decoupee` — so orphan recovery leaves it
+    # alone without anyone having to listen to it.
+    assert submitted == parts
 
 
 def test_splitting_only_happens_once_the_record_has_landed(tmp_path):
@@ -405,3 +421,61 @@ def test_the_duration_uses_the_file_own_sample_rate(tmp_path):
 
     take = Take("00001_Source.WAV", len(data), 3, WHEN)
     assert _started(path, take) == WHEN - timedelta(seconds=7)
+
+
+# --- a split take is not transcribed a second time ---
+
+
+def test_a_split_take_is_named_decoupee_and_not_submitted(tmp_path):
+    """Transcribing a take and then its own parts is the same audio twice.
+
+    Measured on real material: a 242 s take cut into six parts cost 484 s of
+    naming for 242 s of sound — 38 % of the batch wasted on the queue that is
+    bounded by VRAM and runs one job at a time. The whole take still has to
+    carry a name, or orphan recovery hunts it down at every launch; it just
+    does not have to be listened to for one.
+    """
+    wav = _marked_wav()
+    card = FakeCard([_take("00001_Source.WAV", size=len(wav))], content=wav)
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    submitted = []
+    parts = [tmp_path / "out" / "p1.wav", tmp_path / "out" / "p2.wav"]
+
+    def splitter(path, out, **kwargs):
+        out.mkdir(parents=True, exist_ok=True)
+        for p in parts:
+            p.write_bytes(b"x")
+        return parts
+
+    list(intake(card, led, lambda w: tmp_path / "out", submitted.append,
+                splitter=splitter))
+    assert submitted == parts
+    kept = led.records()[0].path.name
+    assert kept.endswith("__decoupee.wav"), kept
+    assert not is_orphan(kept)
+
+
+def test_a_take_whose_split_fails_is_still_submitted(tmp_path):
+    """Named decoupee but never cut: it must still get a real name."""
+    wav = _marked_wav()
+    card = FakeCard([_take("00001_Source.WAV", size=len(wav))], content=wav)
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    submitted = []
+
+    def splitter(path, out, **kwargs):
+        raise ValueError("missing fmt or data chunk")
+
+    list(intake(card, led, lambda w: tmp_path / "out", submitted.append,
+                splitter=splitter))
+    assert len(submitted) == 1
+    assert submitted[0] == led.records()[0].path
+
+
+def test_a_take_without_markers_is_submitted_as_before(tmp_path):
+    card = FakeCard([_take("00001_Source.WAV")])
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    submitted = []
+    list(intake(card, led, lambda w: tmp_path / "out", submitted.append,
+                splitter=lambda path, out, **kwargs: []))
+    assert len(submitted) == 1
+    assert submitted[0].name.endswith("__sans-nom.wav")

@@ -22,10 +22,40 @@ from conteur.signal import CAPTURE_RATE
 
 
 @dataclass(frozen=True)
+class CardVerdict:
+    """What an import concluded about one card.
+
+    `digests` holds every take on the card — copied now or recognised as
+    already held. `complete` is false as soon as one take produced none, so a
+    card with a failure cannot unlock erasing without any special case.
+    `inventory` is the cheap fingerprint the erase re-checks before firing.
+    """
+    serial: str
+    digests: frozenset[str]
+    inventory: tuple
+    complete: bool
+
+
+def inventory_of(takes) -> tuple:
+    """A fingerprint of what the card held, to notice a change later.
+
+    Names, sizes and closing times — not digests, which would mean reading
+    the card again. Comparing names is wrong in general — a name is not an
+    identity, since the take counter restarts at 00001 after an erase — but
+    sound here, and only here: this fingerprint spans the window between an
+    import and the erase it may unlock, a window of seconds during which no
+    erase can have happened, so no name has had the chance to come round
+    again over different audio. Do not generalise the comparison elsewhere.
+    """
+    return tuple(sorted((t.name, t.size, t.closed_at.isoformat()) for t in takes))
+
+
+@dataclass(frozen=True)
 class Event:
     kind: str
     take: str | None = None
     detail: str | None = None
+    verdict: "CardVerdict | None" = None
 
 
 def _stamp(when: datetime) -> str:
@@ -124,6 +154,12 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
     """
     takes = card.takes()
     yield Event("inventory", detail=str(len(takes)))
+    # Card name -> digest, for every take this import could account for —
+    # copied now or already held. This is not the identity lookup the
+    # ledger itself refuses to build from names: it is scoped to this one
+    # card, read moments ago, and it exists only to size up the verdict
+    # below. A card cannot be erased unless it has just been read like this.
+    seen: dict[str, str] = {}
 
     for take in takes:
         if stop is not None and stop.is_set():
@@ -147,6 +183,7 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
             continue
         if ledger.has(digest):
             provisional.unlink(missing_ok=True)
+            seen[take.name] = digest
             yield Event("skipped", take=take.name)
             continue
         yield Event("verified", take=take.name)
@@ -175,6 +212,7 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
         ledger.add(Record(digest=digest, card_name=take.name, size=take.size,
                           folder=final.parent, prefix=name_prefix(final),
                           imported_at=datetime.now()))
+        seen[take.name] = digest
         yield Event("recorded", take=take.name, detail=str(final))
 
         # The parts land in the take's own folder, not in a subfolder of their
@@ -213,4 +251,13 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
             submit(final)
             yield Event("submitted", take=final.name)
 
+    # complete compares counts of *takes*, not of digests: two takes holding
+    # identical bytes share one digest, and both are held — the card is
+    # still fully accounted for.
+    yield Event("verdict", verdict=CardVerdict(
+        serial=getattr(card, "serial", ""),
+        digests=frozenset(seen.values()),
+        inventory=inventory_of(takes),
+        complete=len(seen) == len(takes),
+    ))
     yield Event("done")

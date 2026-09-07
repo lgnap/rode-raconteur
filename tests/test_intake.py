@@ -6,7 +6,7 @@ import pytest
 from pathlib import Path
 
 from conteur.card import Take, VerificationError
-from conteur.intake import Event, import_name, intake, part_name
+from conteur.intake import CardVerdict, Event, import_name, intake, inventory_of, part_name
 from conteur.ledger import Ledger
 from conteur.orphans import is_orphan, parse_timestamp
 
@@ -61,7 +61,7 @@ def test_the_sequence_of_events_is_the_designed_order(tmp_path):
     events = list(intake(card, led, lambda when: tmp_path / "out",
                          submitted.append, splitter=lambda path, out, **kwargs: []))
     assert [e.kind for e in events] == [
-        "inventory", "copy", "verified", "recorded", "submitted", "done",
+        "inventory", "copy", "verified", "recorded", "submitted", "verdict", "done",
     ]
     assert len(submitted) == 1
 
@@ -78,7 +78,7 @@ def test_a_take_already_recorded_is_skipped(tmp_path):
                 splitter=lambda path, out, **kwargs: []))
     events = list(intake(card, led, dest_for, lambda p: None,
                          splitter=lambda path, out, **kwargs: []))
-    assert [e.kind for e in events] == ["inventory", "copy", "skipped", "done"]
+    assert [e.kind for e in events] == ["inventory", "copy", "skipped", "verdict", "done"]
     assert len(led.records()) == 1
     assert len(list((tmp_path / "out").iterdir())) == 1
 
@@ -107,7 +107,7 @@ def test_the_same_name_with_new_content_is_a_new_take(tmp_path):
     kinds = [e.kind for e in events]
     assert "skipped" not in kinds
     assert kinds == ["inventory", "copy", "verified", "recorded", "submitted",
-                     "done"]
+                     "verdict", "done"]
     assert len(led.records()) == 2
     assert len({r.digest for r in led.records()}) == 2
     assert len(list((tmp_path / "out").iterdir())) == 2
@@ -126,7 +126,7 @@ def test_a_failed_verification_stops_before_recording(tmp_path):
                          lambda p: None, copier=refuse,
                          splitter=lambda path, out, **kwargs: []))
     kinds = [e.kind for e in events]
-    assert kinds == ["inventory", "copy", "failed", "done"]
+    assert kinds == ["inventory", "copy", "failed", "verdict", "done"]
     assert "recorded" not in kinds
     assert "split" not in kinds
     assert led.records() == []
@@ -268,7 +268,7 @@ def test_the_same_content_under_a_new_name_is_skipped_not_recorded_twice(tmp_pat
                          lambda p: None, copier=same_content,
                          splitter=lambda path, out, **kwargs: []))
 
-    assert [e.kind for e in events] == ["inventory", "copy", "skipped", "done"]
+    assert [e.kind for e in events] == ["inventory", "copy", "skipped", "verdict", "done"]
     assert len(led.records()) == 1
     after = sorted(p.name for p in (tmp_path / "out").iterdir())
     assert after == before
@@ -479,3 +479,53 @@ def test_a_take_without_markers_is_submitted_as_before(tmp_path):
                 splitter=lambda path, out, **kwargs: []))
     assert len(submitted) == 1
     assert submitted[0].name.endswith("__sans-nom.wav")
+
+
+def test_the_verdict_carries_every_take_on_the_card(tmp_path):
+    """The lock is not a question one can ask: knowing whether a card is fully
+    held means reading it, which is what an import does. So the import says so
+    at the end, for that card alone."""
+    card = FakeCard([_take("00001_S.WAV"), _take("00002_S.WAV")])
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    events = list(intake(card, led, lambda w: tmp_path / "out", lambda p: None,
+                         splitter=lambda path, out, **kwargs: []))
+    verdict = [e.verdict for e in events if e.kind == "verdict"][0]
+    assert verdict.serial == "800A-F63E"
+    assert len(verdict.digests) == 1        # both takes hold the same bytes
+    assert verdict.complete is True
+    assert led.erase_allowed(verdict.digests) is True
+
+
+def test_a_take_that_failed_leaves_the_verdict_incomplete(tmp_path):
+    card = FakeCard([_take("00001_S.WAV"), _take("00002_S.WAV")])
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+
+    def flaky(card_, take, dest, **kwargs):
+        if take.name.startswith("00001"):
+            raise VerificationError("short read")
+        dest.write_bytes(b"abc")
+        return "cc" * 32
+
+    events = list(intake(card, led, lambda w: tmp_path / "out", lambda p: None,
+                         copier=flaky, splitter=lambda path, out, **kwargs: []))
+    verdict = [e.verdict for e in events if e.kind == "verdict"][0]
+    assert verdict.complete is False
+
+
+def test_a_take_already_held_still_counts_towards_the_verdict(tmp_path):
+    """A second run copies nothing new, and the card is still fully held."""
+    card = FakeCard([_take("00001_S.WAV")])
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    args = (led, lambda w: tmp_path / "out", lambda p: None)
+    list(intake(card, *args, splitter=lambda path, out, **kwargs: []))
+    events = list(intake(card, *args, splitter=lambda path, out, **kwargs: []))
+    verdict = [e.verdict for e in events if e.kind == "verdict"][0]
+    assert verdict.complete is True
+    assert led.erase_allowed(verdict.digests) is True
+
+
+def test_the_inventory_fingerprint_notices_a_new_take():
+    a = [_take("00001_S.WAV", 10)]
+    assert inventory_of(a) == inventory_of(list(a))
+    assert inventory_of(a) != inventory_of(a + [_take("00002_S.WAV", 10)])
+    assert inventory_of(a) != inventory_of([_take("00001_S.WAV", 11)])

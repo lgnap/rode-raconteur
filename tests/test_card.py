@@ -80,3 +80,59 @@ def test_a_non_fat32_device_is_refused(tmp_path):
     with img.open("rb") as fh:
         with pytest.raises(ValueError, match="not FAT32"):
             Card(fh)
+
+
+# Task 4: Verified copy
+
+from conteur.card import PART_SUFFIX, VerificationError, copy_verified
+
+
+def test_the_copy_is_hashed_while_it_is_written(tmp_path):
+    """One read of the device yields both the file and its proof. Reading it
+    twice would double the only expensive part of the operation."""
+    img = tmp_path / "card.img"
+    content = bytes(range(256)) * 40
+    build(img, {"00001_Source.WAV": content})
+    dest = tmp_path / "out.wav"
+    with img.open("rb") as fh:
+        card = Card(fh)
+        digest = copy_verified(card, card.takes()[0], dest)
+    assert dest.read_bytes() == content
+    assert digest == hashlib.sha256(content).hexdigest()
+
+
+def test_a_failed_verification_leaves_a_part_file_and_raises(tmp_path):
+    """The .part is kept, not deleted: we do not destroy data on our own
+    initiative, even bad data, and the source is intact anyway."""
+    img = tmp_path / "card.img"
+    build(img, {"00001_Source.WAV": b"z" * 600})
+    dest = tmp_path / "out.wav"
+    with img.open("rb") as fh:
+        card = Card(fh)
+        with pytest.raises(VerificationError):
+            copy_verified(card, card.takes()[0], dest, attempts=1,
+                          verifier=lambda path: "0" * 64)
+    assert dest.with_name(dest.name + PART_SUFFIX).exists()
+    assert not dest.exists()
+
+
+def test_a_transient_failure_is_retried_once(tmp_path):
+    """A passing USB error is plausible; two in a row are not."""
+    img = tmp_path / "card.img"
+    content = b"y" * 600
+    build(img, {"00001_Source.WAV": content})
+    dest = tmp_path / "out.wav"
+    calls = []
+
+    def flaky(path):
+        calls.append(path)
+        if len(calls) == 1:
+            return "0" * 64
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    with img.open("rb") as fh:
+        card = Card(fh)
+        digest = copy_verified(card, card.takes()[0], dest, verifier=flaky)
+    assert len(calls) == 2
+    assert digest == hashlib.sha256(content).hexdigest()
+    assert dest.exists()

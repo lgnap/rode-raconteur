@@ -1,6 +1,7 @@
 """Reading a RØDE card: identity, inventory, and bytes."""
 
 import hashlib
+from datetime import datetime
 
 import pytest
 
@@ -80,6 +81,20 @@ def test_a_non_fat32_device_is_refused(tmp_path):
     with img.open("rb") as fh:
         with pytest.raises(ValueError, match="not FAT32"):
             Card(fh)
+
+
+def test_the_closed_at_timestamp_is_decoded_from_directory_entry(tmp_path):
+    """The Take.closed_at field must decode FAT32 date/time correctly.
+
+    The test helper writes fixed constants: time 0x5AE7 and date 0x5CE7.
+    This decodes to 2026-07-07 11:23:14 per FAT32 bit packing.
+    """
+    img = tmp_path / "card.img"
+    build(img, {"00001_Source.WAV": b"x" * 100})
+    with img.open("rb") as fh:
+        takes = Card(fh).takes()
+    assert len(takes) == 1
+    assert takes[0].closed_at == datetime(2026, 7, 7, 11, 23, 14)
 
 
 # Task 4: Verified copy

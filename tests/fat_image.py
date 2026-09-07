@@ -19,7 +19,7 @@ DATA_START = (RESERVED + NUM_FATS * SECTORS_PER_FAT) * SECTOR
 ROOT_CLUSTER = 2
 
 
-def _boot(serial: int, label: bytes) -> bytes:
+def _boot(serial: int, label: bytes, total_clusters: int = 4096) -> bytes:
     b = bytearray(SECTOR)
     b[0:3] = b"\xeb\x58\x90"
     b[3:11] = b"RODE    "
@@ -27,8 +27,14 @@ def _boot(serial: int, label: bytes) -> bytes:
     b[13] = SECTORS_PER_CLUSTER
     b[14:16] = struct.pack("<H", RESERVED)
     b[16] = NUM_FATS
+    b[21] = 0xF8                                    # BPB_Media
+    b[24:26] = struct.pack("<H", 63)               # BPB_SecPerTrk
+    b[26:28] = struct.pack("<H", 255)              # BPB_NumHeads
+    b[32:36] = struct.pack("<I", RESERVED + NUM_FATS * SECTORS_PER_FAT
+                                  + total_clusters * SECTORS_PER_CLUSTER)
     b[36:40] = struct.pack("<I", SECTORS_PER_FAT)
     b[44:48] = struct.pack("<I", ROOT_CLUSTER)
+    b[66] = 0x29                                    # BS_BootSig
     b[67:71] = struct.pack("<I", serial)
     b[71:82] = label.ljust(11)[:11]
     b[82:87] = b"FAT32"
@@ -114,7 +120,7 @@ def build(path: Path, files: dict[str, bytes], serial: int = 0x800AF63E,
     data[root:root + len(entries)] = entries
 
     with path.open("wb") as fh:
-        fh.write(_boot(serial, b"WirelessPRO"))
+        fh.write(_boot(serial, b"WirelessPRO", total_clusters))
         fh.write(bytes(RESERVED * SECTOR - SECTOR))
         fh.write(b"".join(struct.pack("<I", e) for e in fat)
                  .ljust(SECTORS_PER_FAT * SECTOR, b"\x00"))

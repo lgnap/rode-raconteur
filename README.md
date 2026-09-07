@@ -9,7 +9,7 @@ recorder became the better tool for everyday use. Four things live here:
 
 | | |
 |---|---|
-| **1. RODE Central under Wine** | How far it gets, what unlocks it, and the one thing that genuinely does not work — [docs/rode-central-wine.md](docs/rode-central-wine.md) |
+| **1. RODE Central under Wine** | How far it gets, what unlocks it, and the one thing that genuinely does not work — [docs/rode-central-wine.md](docs/rode-central-wine.md), with a Wine bug report [still to file](docs/upstream/) |
 | **2. How the Wireless PRO works** | Interfaces, HID reports, onboard recordings, markers, throughput — [docs/device-map.md](docs/device-map.md) and [docs/wireless-pro-hid-observations.md](docs/wireless-pro-hid-observations.md) |
 | **3. Erasing recordings with krode** | What that binary is, why it has to exist, and what we sent upstream — [docs/krode.md](docs/krode.md) |
 | **4. `conteur`, a recorder** | Records from the receiver and names each take from what is said in it — [below](#conteur--a-recorder-that-names-its-own-takes) |

@@ -213,6 +213,13 @@ same devices, working in one launch and failing in the next.
   [`docs/wireless-pro-hid-observations.md`](wireless-pro-hid-observations.md)
   for the vendor protocol, including the erase command, which works reliably.
 
+## Reporting this upstream
+
+A finished Wine bug report for the `CM_Get_Child_Ex` stub is kept in
+[upstream/winehq-cm-get-child-ex-stub.md](upstream/winehq-cm-get-child-ex-stub.md).
+**It has not been filed** — it needs a Bugzilla account. If you have one, posting
+it as-is would help; see [upstream/README.md](upstream/README.md).
+
 ## Not covered
 
 - Whether the same approach works with plain `wine` outside Bottles. It should

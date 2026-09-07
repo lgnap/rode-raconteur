@@ -11,6 +11,7 @@ from conteur.naming import (
     ORIGIN_TRANSCRIPT, SILENCE,
     choose_name, slugify,
 )
+from conteur.orphans import is_placeholder
 from conteur.paths import build_name, unique_path
 from conteur.signal import (
     CAPTURE_RATE, looks_like_timecode, rms_dbfs, to_whisper_input,
@@ -52,7 +53,18 @@ def _read_wav(path: Path) -> np.ndarray:
 
 
 def _renamed(wav_path: Path, when: datetime, slug: str, origin: str) -> NameResult:
-    target = unique_path(wav_path.parent, build_name(when, slug))
+    stem = wav_path.stem
+    if "__" in stem and is_placeholder(stem.rsplit("__", 1)[1]):
+        # An imported take, or a part cut from one: everything before the
+        # last `__` is the name the card carried and the part's rank, which
+        # decision 8 keeps deliberately because it will not be reproducible —
+        # the take counter restarts at 00001 after an erase. Only the
+        # placeholder tail is replaced. A take recorded here has no such
+        # segment and is rebuilt from its timestamp, exactly as before.
+        name = f"{stem.rsplit('__', 1)[0]}__{slug}{wav_path.suffix}"
+    else:
+        name = build_name(when, slug)
+    target = unique_path(wav_path.parent, name)
     wav_path.rename(target)
     return NameResult(path=target, slug=slug, origin=origin)
 

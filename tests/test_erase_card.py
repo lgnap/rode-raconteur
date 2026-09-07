@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from conteur.card import Take
-from conteur.erase import FAILED, REENUMERATED, SUCCESS, EraseResult
+from conteur.erase import FAILED, REENUMERATED, REFUSED, SUCCESS, UNKNOWN, EraseResult
 from conteur.intake import CardVerdict, erase_card, inventory_of
 from conteur.ledger import Ledger, Record, name_prefix
 
@@ -119,6 +119,46 @@ def test_a_failed_erase_is_reported_as_such(tmp_path):
         eraser=lambda node, **k: EraseResult(FAILED, []),
         hasher=_hasher("aa" * 32)))
     assert [e.kind for e in events] == ["erasing", "failed"]
+
+
+def test_a_refused_erase_is_reported_as_such(tmp_path):
+    takes = [_take()]
+    card, led = FakeCard(takes), _held(tmp_path)
+    events = list(erase_card(
+        card, led, _verdict(takes, ["aa" * 32]), Path("/dev/hidrawX"),
+        eraser=lambda node, **k: EraseResult(REFUSED, []),
+        hasher=_hasher("aa" * 32)))
+    assert [e.kind for e in events] == ["erasing", "failed"]
+    assert events[-1].kind != "erased"
+
+
+def test_an_unknown_outcome_is_reported_as_its_own_kind(tmp_path):
+    """Silence means the command may well have gone through — telling the
+    user it failed would be the wrong direction to be imprecise in."""
+    takes = [_take()]
+    card, led = FakeCard(takes), _held(tmp_path)
+    events = list(erase_card(
+        card, led, _verdict(takes, ["aa" * 32]), Path("/dev/hidrawX"),
+        eraser=lambda node, **k: EraseResult(UNKNOWN, []),
+        hasher=_hasher("aa" * 32)))
+    assert [e.kind for e in events] == ["erasing", "unknown"]
+    assert events[-1].kind != "erased"
+
+
+def test_a_mismatched_serial_refuses_without_sending_anything(tmp_path):
+    """The verdict must be about *this* card, not one paired with it by
+    mistake — the pairing bug two docked transmitters would invite."""
+    takes = [_take()]
+    card, led = FakeCard(takes), _held(tmp_path)
+    other_verdict = CardVerdict(serial="OTHER-SERIAL",
+                                digests=frozenset(["aa" * 32]),
+                                inventory=inventory_of(takes), complete=True)
+    sent = []
+    events = list(erase_card(card, led, other_verdict, Path("/dev/hidrawX"),
+                             eraser=lambda node, **k: sent.append(node),
+                             hasher=_hasher("aa" * 32)))
+    assert [e.kind for e in events] == ["refused"]
+    assert sent == []
 
 
 def test_without_a_hid_node_it_refuses(tmp_path):

@@ -15,7 +15,7 @@ from pathlib import Path
 from conteur.bwf import chunks, cue_points, started_at
 from conteur.bwf import split as split_at_markers
 from conteur.card import VerificationError, copy_verified, sha256_file
-from conteur.erase import REENUMERATED, SUCCESS
+from conteur.erase import FAILED, REENUMERATED, REFUSED, SUCCESS, UNKNOWN
 from conteur.erase import erase as erase_over_hid
 from conteur.ledger import Ledger, Record, name_prefix
 from conteur.naming import SPLIT, UNNAMED
@@ -265,19 +265,45 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
     yield Event("done")
 
 
+# French wording for the terminal outcomes erase() can report, other than
+# SUCCESS/REENUMERATED (a success) and UNKNOWN (its own outcome below). Kept
+# out of the f-string so the window never shows a raw internal token such as
+# "refused" spliced into otherwise-French text.
+_FAILURE_MESSAGES = {
+    FAILED: "l'effacement a échoué",
+    REFUSED: "la carte a refusé la commande d'effacement",
+}
+
+
 def erase_card(card, ledger: Ledger, verdict: CardVerdict, node,
                eraser=erase_over_hid, hasher=sha256_file) -> Iterator[Event]:
     """Erase one card, and only if it is still safe to.
 
-    Three things must hold, and each is checked here rather than trusted:
-    the import must have accounted for every take; the ledger must still find
-    an intact local twin for every digest; and the card must hold exactly what
-    the import saw. A transmitter can leave the case, record, and come back
-    between the import and the click, which would make the verdict stale.
+    Four things must hold, and each is checked here rather than trusted: the
+    verdict must be about *this* card, not some other one paired with it by
+    mistake; the import must have accounted for every take; the ledger must
+    still find an intact local twin for every digest; and the card must hold
+    exactly what the import saw. A transmitter can leave the case, record,
+    and come back between the import and the click, which would make the
+    verdict stale.
+
+    The serial check comes first and matters most once two transmitters can
+    be docked at once: nothing else here reads the card's own serial, so a
+    caller that mismatches verdict and card — or verdict and HID node — would
+    otherwise sail through every other guard undetected.
 
     Re-reading the directory is cheap and sound here only: no erase has
     happened in between, so no name has been recycled.
+
+    An empty card with an empty, vacuously-complete verdict passes every
+    guard and does erase — that was considered, not missed: there is nothing
+    on such a card to lose, so refusing it would be a special case earning
+    nothing.
     """
+    if verdict.serial != getattr(card, "serial", None):
+        yield Event("refused",
+                    detail="le verdict ne correspond pas à cette carte")
+        return
     if node is None:
         yield Event("refused", detail="aucun nœud HID pour cet appareil")
         return
@@ -296,5 +322,15 @@ def erase_card(card, ledger: Ledger, verdict: CardVerdict, node,
     result = eraser(node)
     if result.verdict in (SUCCESS, REENUMERATED):
         yield Event("erased", detail=verdict.serial)
+    elif result.verdict == UNKNOWN:
+        # Silence from the transmitter is not a failure: the command may well
+        # have gone through, and conteur.erase.erase's own contract is that
+        # the honest answer here is "re-read the card", not "it failed" —
+        # telling the user it failed when nobody knows is the wrong direction
+        # to be imprecise in, since they might re-run it or trust it is safe.
+        yield Event("unknown",
+                    detail=(f"{verdict.serial} : état indéterminé, "
+                            "il faut relire la carte"))
     else:
-        yield Event("failed", detail=f"{verdict.serial} : {result.verdict}")
+        reason = _FAILURE_MESSAGES.get(result.verdict, result.verdict)
+        yield Event("failed", detail=f"{verdict.serial} : {reason}")

@@ -6,3 +6,6 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+
+# plans et specs de conception, non publiés
+/docs/superpowers/

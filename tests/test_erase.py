@@ -21,6 +21,7 @@ class FakeNode:
         self.written = []
         self.write_raises = write_raises
         self.closed = False
+        self.reads = 0
 
     def write(self, data):
         self.written.append(data)
@@ -29,6 +30,7 @@ class FakeNode:
         return len(data)
 
     def read(self):
+        self.reads += 1
         if not self.replies:
             raise TimeoutError
         reply = self.replies.pop(0)
@@ -143,11 +145,13 @@ def test_persistent_transient_errors_do_not_hang():
     class AlwaysEAGAIN:
         def __init__(self):
             self.closed = False
+            self.reads = 0
 
         def write(self, data):
             return len(data)
 
         def read(self):
+            self.reads += 1
             raise BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")
 
         def close(self):
@@ -155,14 +159,13 @@ def test_persistent_transient_errors_do_not_hang():
 
     node = AlwaysEAGAIN()
     timeout_s = 0.1
-    start = time.monotonic()
     result = erase(Path("/dev/hidraw6"), opener=lambda _: node, idle_timeout_s=timeout_s)
-    elapsed = time.monotonic() - start
 
     assert result.verdict == UNKNOWN
     assert node.closed
-    # Ensure we didn't hang and completed within roughly the timeout (with some slack).
-    assert elapsed < timeout_s + 1.0
+    # With a 10 ms sleep per retry and 0.1 s timeout, expect ~10 read() calls.
+    # Allow generous margin to catch any significant regression (e.g., if sleep were removed).
+    assert node.reads < 100, f"Expected ~10 calls, got {node.reads} — busy-loop regression?"
 
 
 def test_persistent_timeouts_do_not_burn_cpu():
@@ -170,12 +173,10 @@ def test_persistent_timeouts_do_not_burn_cpu():
     and must not busy-loop. Regression test for the busy-loop defect where the
     loop checked the deadline only on one path."""
     node = FakeNode([])  # Empty replies = all TimeoutError
-    timeout_s = 0.05
-    start = time.monotonic()
+    timeout_s = 0.1
     result = erase(Path("/dev/hidraw6"), opener=lambda _: node, idle_timeout_s=timeout_s)
-    elapsed = time.monotonic() - start
 
     assert result.verdict == UNKNOWN
-    # Ensure the test didn't take 10+ seconds (the old behavior burned a full core
-    # for the whole default timeout). Should be well under 1 second with the fix.
-    assert elapsed < 1.0
+    # With a 10 ms sleep per retry and 0.1 s timeout, expect ~10 read() calls.
+    # Allow generous margin to catch any significant regression (e.g., if sleep were removed).
+    assert node.reads < 100, f"Expected ~10 calls, got {node.reads} — busy-loop regression?"

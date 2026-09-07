@@ -85,19 +85,18 @@ def erase(node_path: Path, opener=default_opener,
                 return EraseResult(UNKNOWN, percents)
             try:
                 data = node.read()
-            except TimeoutError:
+            except (TimeoutError, OSError) as error:
+                # Handle device disappearance (real errors, not transient ones).
+                if isinstance(error, OSError) and not isinstance(error, TimeoutError):
+                    if error.errno in (errno.ENODEV, errno.ENXIO, errno.EIO):
+                        return EraseResult(REENUMERATED if percents else FAILED, percents)
+                    if error.errno not in (errno.EAGAIN, errno.EINTR):
+                        # Unknown error: propagate rather than silently converting.
+                        raise
+                # Both TimeoutError and transient OSError (EAGAIN, EINTR) mean nothing
+                # arrived and should be retried, so pause before retrying to avoid busy-loop.
+                time.sleep(RETRY_PAUSE_S)
                 continue
-            except OSError as error:
-                # Only treat as device disappearance if errno indicates that.
-                if error.errno in (errno.ENODEV, errno.ENXIO, errno.EIO):
-                    return EraseResult(REENUMERATED if percents else FAILED, percents)
-                # Transient errors like EAGAIN or EINTR should be retried, but with
-                # a small pause to avoid busy-looping on persistent failures.
-                if error.errno in (errno.EAGAIN, errno.EINTR):
-                    time.sleep(RETRY_PAUSE_S)
-                    continue
-                # Unknown error: propagate it rather than silently converting to a verdict.
-                raise
             # Reset deadline only when a report actually arrives, so silence is silence
             # whatever produced it.
             deadline = time.monotonic() + idle_timeout_s

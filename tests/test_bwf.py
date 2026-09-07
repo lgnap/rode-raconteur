@@ -119,3 +119,23 @@ def test_a_take_without_markers_is_not_split(tmp_path):
     path = tmp_path / "one.wav"
     path.write_bytes(_riff(_fmt(), _cue(), _chunk(b"data", b"\x00" * 64)))
     assert split(path, tmp_path / "out") == []
+
+
+def test_the_caller_names_the_parts_and_is_told_where_each_one_starts(tmp_path):
+    """bwf knows nothing of anyone's naming rules. It hands over each part's
+    offset in samples and the file's own sample rate, which is what a caller
+    needs to work out when that part started."""
+    audio = bytes(range(256)) * 16          # 4096 bytes = 1024 frames
+    path = tmp_path / "s.wav"
+    path.write_bytes(_riff(_fmt(), _cue(400, 800), _chunk(b"data", audio)))
+    seen = []
+
+    def name_for(index, total, start_frame, rate):
+        seen.append((index, total, start_frame, rate))
+        return f"morceau-{index}-de-{total}.wav"
+
+    parts = split(path, tmp_path / "out", name_for=name_for)
+    assert seen == [(1, 3, 0, 48000), (2, 3, 400, 48000), (3, 3, 800, 48000)]
+    assert [p.name for p in parts] == ["morceau-1-de-3.wav",
+                                       "morceau-2-de-3.wav",
+                                       "morceau-3-de-3.wav"]

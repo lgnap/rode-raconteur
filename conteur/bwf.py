@@ -112,11 +112,26 @@ def _raw_chunk(cid: bytes, payload: bytes) -> bytes:
     return cid + struct.pack("<I", len(payload)) + payload + pad
 
 
-def split(path: Path, out_dir: Path) -> list[Path]:
+def default_part_name(index: int, total: int, start_frame: int,
+                      rate: int) -> str:
+    """Position only. This module knows nothing of anyone's naming rules.
+
+    A caller with rules of its own — a timestamp, the name the card carried —
+    passes `name_for` instead. It gets the part's offset in samples and the
+    file's sample rate, which is everything needed to work out when that part
+    started, and bwf stays ignorant of what is done with it.
+    """
+    return f"{index:02d}_sur_{total:02d}.wav"
+
+
+def split(path: Path, out_dir: Path, name_for=default_part_name) -> list[Path]:
     """Cut at every marker, keeping all the audio. Returns the parts written.
 
     Returns an empty list when the take has no markers: there is nothing to cut,
     and writing a single part identical to the source would only duplicate it.
+
+    `name_for(index, total, start_frame, rate)` names each part; see
+    `default_part_name`.
 
     Known limitation: the parts carry `fmt ` and `bext`, not `cue ` or `PAD `.
     Rejoining them restores the audio byte for byte but not the header, so a
@@ -134,6 +149,7 @@ def split(path: Path, out_dir: Path) -> list[Path]:
             fh.seek(found["bext"][0])
             bext = fh.read(found["bext"][1])
         data_offset, data_size = found["data"]
+        rate = struct.unpack("<I", fmt[4:8])[0]
         block_align = struct.unpack("<H", fmt[12:14])[0]
         frames = data_size // block_align
         marks = [p for p in cue_points(fh) if 0 < p < frames]
@@ -146,7 +162,7 @@ def split(path: Path, out_dir: Path) -> list[Path]:
         written: list[Path] = []
         total = len(bounds)
         for index, (start, end) in enumerate(bounds, 1):
-            target = out_dir / f"{index:02d}_sur_{total:02d}.wav"
+            target = out_dir / name_for(index, total, start, rate)
             head = _raw_chunk(b"fmt ", fmt)
             if bext is not None:
                 head += _raw_chunk(b"bext", _shift_bext(bext, start))

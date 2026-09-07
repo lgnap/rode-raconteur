@@ -9,7 +9,7 @@ matters gets verified rather than hoped for.
 import struct
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from conteur.bwf import chunks, started_at
@@ -28,6 +28,10 @@ class Event:
     detail: str | None = None
 
 
+def _stamp(when: datetime) -> str:
+    return when.strftime("%Y-%m-%d_%H%M%S")
+
+
 def import_name(started: datetime, card_name: str) -> str:
     """`<start>_<name on the card>__<slug>.wav`.
 
@@ -36,8 +40,22 @@ def import_name(started: datetime, card_name: str) -> str:
     00001 after an erase. The double underscore before the slug is the
     idempotence marker that tools/nommer-morceaux.py already relies on.
     """
-    stem = Path(card_name).stem
-    return f"{started.strftime('%Y-%m-%d_%H%M%S')}_{stem}__{UNNAMED}.wav"
+    return f"{_stamp(started)}_{Path(card_name).stem}__{UNNAMED}.wav"
+
+
+def part_name(started: datetime, card_name: str, index: int, total: int) -> str:
+    """`<the part's own start>_<name on the card>_NN_sur_MM__<slug>.wav`.
+
+    A part is a take like any other: it carries its own start time, which is
+    the whole reason the splitter shifts each part's BWF timestamp. Without it
+    the name answers none of the three questions the take's name answers —
+    when, from where, what — and worse, two pieces of machinery go blind:
+    `parse_timestamp` returns None, so the part is stamped with the import
+    time instead of its own, and `is_orphan` is False, so a part left unnamed
+    by a crash is invisible to recovery for ever.
+    """
+    return (f"{_stamp(started)}_{Path(card_name).stem}"
+            f"_{index:02d}_sur_{total:02d}__{UNNAMED}.wav")
 
 
 def _started(path: Path, take) -> datetime:
@@ -119,14 +137,29 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
                           path=final, imported_at=datetime.now()))
         yield Event("recorded", take=take.name, detail=str(final))
 
-        parts = splitter(final, final.parent / final.stem)
+        # The parts land in the take's own folder, not in a subfolder of their
+        # own, each under its own start time — the take's start plus the
+        # part's offset in samples. Everything downstream reads that name:
+        # `parse_timestamp` to date it, `is_orphan` to find it again after a
+        # crash, `destination_dir` to file it by month.
+        def name_part(index, total, offset, rate, when=started, take=take):
+            start = when + timedelta(seconds=offset / rate) if rate else when
+            return unique_path(
+                final.parent, part_name(start, take.name, index, total)).name
+
+        parts = splitter(final, final.parent, name_for=name_part)
         if parts:
             yield Event("split", take=take.name, detail=str(len(parts)))
             for part in parts:
                 submit(part)
                 yield Event("submitted", take=part.name)
-        else:
-            submit(final)
-            yield Event("submitted", take=final.name)
+        # The whole take is submitted even when it was split. It is still on
+        # disk — we never delete what we copied — and anything left carrying
+        # __sans-nom is by definition what orphan recovery hunts down at the
+        # next launch. Naming it now does that work at the moment we know it
+        # is needed, instead of deferring it to a startup scan that would
+        # surprise the user with a job they did not ask for.
+        submit(final)
+        yield Event("submitted", take=final.name)
 
     yield Event("done")

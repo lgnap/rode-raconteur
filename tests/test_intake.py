@@ -4,8 +4,9 @@ from datetime import datetime
 from pathlib import Path
 
 from conteur.card import Take, VerificationError
-from conteur.intake import Event, import_name, intake
+from conteur.intake import Event, import_name, intake, part_name
 from conteur.ledger import Ledger
+from conteur.orphans import is_orphan, parse_timestamp
 
 WHEN = datetime(2026, 9, 7, 11, 14, 32)
 
@@ -142,7 +143,12 @@ def test_splitting_happens_after_recording_and_submits_the_parts(tmp_path):
                          submitted.append, splitter=lambda path, out, **kwargs: parts))
     kinds = [e.kind for e in events]
     assert kinds.index("recorded") < kinds.index("split")
-    assert submitted == parts
+    # The whole take is submitted too: it stays on disk, and anything left
+    # carrying __sans-nom would otherwise be picked up by orphan recovery at
+    # the next launch anyway.
+    assert submitted[:2] == parts
+    assert submitted[2].name.endswith("__sans-nom.wav")
+    assert len(submitted) == 3
 
 
 def test_splitting_only_happens_once_the_record_has_landed(tmp_path):
@@ -248,3 +254,48 @@ def test_the_same_content_under_a_new_name_is_skipped_not_recorded_twice(tmp_pat
     assert len(led.records()) == 1
     after = sorted(p.name for p in (tmp_path / "out").iterdir())
     assert after == before
+
+
+def test_a_part_carries_its_own_start_the_card_name_and_its_rank():
+    assert part_name(datetime(2026, 9, 7, 11, 12, 25),
+                     "00002_Source-Baffle.WAV", 2, 6) == \
+        "2026-09-07_111225_00002_Source-Baffle_02_sur_06__sans-nom.wav"
+
+
+def test_a_part_is_dated_visible_to_recovery_and_beside_its_take(tmp_path):
+    """The old <stem>/NN_sur_MM.wav shape fell out of every convention at
+    once: no timestamp, so parse_timestamp returned None and the part was
+    stamped with the import time; no __ tail, so is_orphan was False and a
+    part left unnamed by a crash was invisible to recovery for ever."""
+    started = datetime(2026, 9, 7, 11, 10, 30)
+    card = FakeCard([_take("00002_Source-Baffle.WAV")])
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    out = tmp_path / "out"
+
+    def splitter(path, out_dir, name_for=None):
+        # Two parts, the second starting 115 seconds in at 48 kHz.
+        written = []
+        for index, offset in ((1, 0), (2, 115 * 48000)):
+            target = out_dir / name_for(index, 2, offset, 48000)
+            target.write_bytes(b"x")
+            written.append(target)
+        return written
+
+    import conteur.intake as intake_module
+    original = intake_module._started
+    intake_module._started = lambda path, take: started
+    try:
+        list(intake(card, led, lambda when: out, lambda p: None,
+                    splitter=splitter))
+    finally:
+        intake_module._started = original
+
+    names = sorted(p.name for p in out.iterdir())
+    assert names == [
+        "2026-09-07_111030_00002_Source-Baffle_01_sur_02__sans-nom.wav",
+        "2026-09-07_111030_00002_Source-Baffle__sans-nom.wav",
+        "2026-09-07_111225_00002_Source-Baffle_02_sur_02__sans-nom.wav",
+    ]
+    for name in names:
+        assert parse_timestamp(name) is not None
+        assert is_orphan(name)

@@ -71,7 +71,8 @@ def test_the_same_name_with_new_content_is_a_new_take(tmp_path):
     led = Ledger("800A-F63E", root=tmp_path / "ledger")
     dest_for = lambda when: tmp_path / "out"
 
-    first = FakeCard([_take("00001_Source.WAV")], content=b"the first story")
+    first = FakeCard([Take("00001_Source.WAV", len(b"the first story"), 3, WHEN)],
+                     content=b"the first story")
     list(intake(first, led, dest_for, lambda p: None,
                 splitter=lambda path, out, **kwargs: []))
     assert len(led.records()) == 1

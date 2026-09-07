@@ -99,7 +99,9 @@ def test_the_closed_at_timestamp_is_decoded_from_directory_entry(tmp_path):
 
 # Task 4: Verified copy
 
-from conteur.card import PART_SUFFIX, VerificationError, copy_verified
+from conteur.card import (
+    PART_SUFFIX, VerificationError, copy_verified, sha256_file,
+)
 
 
 def test_the_copy_is_hashed_while_it_is_written(tmp_path):
@@ -129,6 +131,63 @@ def test_a_failed_verification_leaves_a_part_file_and_raises(tmp_path):
                           verifier=lambda path: "0" * 64)
     assert dest.with_name(dest.name + PART_SUFFIX).exists()
     assert not dest.exists()
+
+
+def test_a_stream_that_ends_early_never_verifies(tmp_path):
+    """Hashing while writing proves the disk holds what was read; it says
+    nothing about the read having reached the end. A short cluster chain would
+    otherwise truncate every take on the card at once, each one verifying
+    clean and unlocking the erase on a tenth of a recording."""
+    img = tmp_path / "card.img"
+    build(img, {"00001_Source.WAV": b"w" * 1000})
+    dest = tmp_path / "out.wav"
+
+    class Truncating:
+        """A card whose stream stops after the first hundred bytes."""
+
+        def __init__(self, card):
+            self._card = card
+
+        def stream(self, take, chunk=1 << 20):
+            yield b"w" * 100
+
+    with img.open("rb") as fh:
+        card = Card(fh)
+        take = card.takes()[0]
+        with pytest.raises(VerificationError) as failure:
+            copy_verified(Truncating(card), take, dest, attempts=1,
+                          verifier=sha256_file)
+    assert "100" in str(failure.value) and "1000" in str(failure.value)
+    assert not dest.exists()
+    assert dest.with_name(dest.name + PART_SUFFIX).exists()
+
+
+def test_a_short_read_is_retried_like_any_other_failure(tmp_path):
+    """A truncated read can be transient too, so it goes through the same one
+    retry rather than failing the take outright."""
+    img = tmp_path / "card.img"
+    content = b"v" * 600
+    build(img, {"00001_Source.WAV": content})
+    dest = tmp_path / "out.wav"
+    attempts = []
+
+    class ShortOnce:
+        def __init__(self, card):
+            self._card = card
+
+        def stream(self, take, chunk=1 << 20):
+            attempts.append(take.name)
+            if len(attempts) == 1:
+                yield content[:10]
+                return
+            yield from self._card.stream(take, chunk)
+
+    with img.open("rb") as fh:
+        card = Card(fh)
+        digest = copy_verified(ShortOnce(card), card.takes()[0], dest)
+    assert len(attempts) == 2
+    assert digest == hashlib.sha256(content).hexdigest()
+    assert dest.read_bytes() == content
 
 
 def test_a_transient_failure_is_retried_once(tmp_path):

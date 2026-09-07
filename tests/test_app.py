@@ -1008,6 +1008,12 @@ def _wav_bytes(value=1):
     return buf.getvalue()
 
 
+# The size a fake take must declare. copy_verified now refuses a stream that
+# ends before the announced size, so a fake that lies about it is rejected —
+# rightly.
+_WAV_SIZE = len(_wav_bytes())
+
+
 class _FakeBlock:
     """Stands in for StorageDevice.block: a Path whose .open() is read."""
 
@@ -1087,7 +1093,7 @@ def test_take_submission_always_happens_on_the_gui_thread(qapp, tmp_path, monkey
             pass
 
         def takes(self):
-            return [Take("00001_A.WAV", 3, 3, when), Take("00002_A.WAV", 3, 3, when)]
+            return [Take("00001_A.WAV", _WAV_SIZE, 3, when), Take("00002_A.WAV", _WAV_SIZE, 3, when)]
 
         def stream(self, take, chunk=1 << 20):
             yield _wav_bytes(1 if take.name.startswith("00001") else 2)
@@ -1163,7 +1169,7 @@ def test_two_cards_are_cumulative_and_finished_only_after_the_second(
             pass
 
         def takes(self):
-            return [Take("00001_A.WAV", 3, 3, when)]
+            return [Take("00001_A.WAV", _WAV_SIZE, 3, when)]
 
         def stream(self, take, chunk=1 << 20):
             yield _wav_bytes(1)
@@ -1175,7 +1181,7 @@ def test_two_cards_are_cumulative_and_finished_only_after_the_second(
             pass
 
         def takes(self):
-            return [Take("00001_B.WAV", 3, 3, when), Take("00002_B.WAV", 3, 3, when)]
+            return [Take("00001_B.WAV", _WAV_SIZE, 3, when), Take("00002_B.WAV", _WAV_SIZE, 3, when)]
 
         def stream(self, take, chunk=1 << 20):
             # Card 1 must be entirely finished before this ever runs, since
@@ -1241,7 +1247,7 @@ def test_cards_are_read_one_after_another_not_overlapped(qapp, tmp_path, monkeyp
             self.serial = "shared"
 
         def takes(self):
-            return [Take("00001_X.WAV", 3, 3, when)]
+            return [Take("00001_X.WAV", _WAV_SIZE, 3, when)]
 
         def stream(self, take, chunk=1 << 20):
             yield _wav_bytes(1)
@@ -1296,7 +1302,7 @@ def test_shutdown_stops_an_import_in_flight_and_does_not_outlive_the_window(
             pass
 
         def takes(self):
-            return [Take("00001_A.WAV", 3, 3, when)]
+            return [Take("00001_A.WAV", _WAV_SIZE, 3, when)]
 
         def stream(self, take, chunk=1 << 20):
             started.set()
@@ -1366,7 +1372,7 @@ def test_a_card_that_fails_to_open_does_not_stop_the_next_one(
             pass
 
         def takes(self):
-            return [Take("00001_A.WAV", 3, 3, when)]
+            return [Take("00001_A.WAV", _WAV_SIZE, 3, when)]
 
         def stream(self, take, chunk=1 << 20):
             yield _wav_bytes(1)

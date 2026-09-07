@@ -194,20 +194,34 @@ def copy_verified(card: Card, take: Take, dest: Path, attempts: int = 2,
     1.3 % of the copy, because the local disk is ten times faster than the
     device. There is no trade-off worth making here.
 
-    One retry: a passing USB error is plausible, two in a row are not.
+    The length is checked as well as the hash, and it is not a formality: the
+    hash only proves the disk holds what was read, never that the read reached
+    the end of the take. `stream()` stops quietly when the cluster chain runs
+    out or a read comes back empty, so a truncated take would otherwise hash
+    consistently, be renamed out of `.part`, be recorded, and unlock the erase
+    on a tenth of a recording. A short chain truncates every take at once.
+
+    One retry: a passing USB error is plausible, two in a row are not. A short
+    read is retried like any other failure, since a truncated read can be
+    transient too.
     """
     part = dest.with_name(dest.name + PART_SUFFIX)
     last: str | None = None
     for attempt in range(attempts):
         digest = hashlib.sha256()
+        written = 0
         with part.open("wb") as out:
             for block in card.stream(take):
                 digest.update(block)
+                written += len(block)
                 out.write(block)
         streamed = digest.hexdigest()
+        if written != take.size:
+            last = f"{written} bytes read of {take.size}"
+            continue
         if verifier(part) == streamed:
             part.rename(dest)
             return streamed
-        last = streamed
+        last = f"digest {streamed}"
     raise VerificationError(
         f"{take.name}: the copy does not match what was read ({last})")

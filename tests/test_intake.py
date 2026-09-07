@@ -109,6 +109,23 @@ def test_splitting_happens_after_recording_and_submits_the_parts(tmp_path):
     assert submitted == parts
 
 
+def test_splitting_only_happens_once_the_record_has_landed(tmp_path):
+    """Splitting destroys the file whose hash was taken, so the proof must be
+    written first. Asserting on event order alone would not catch an inversion
+    that left the yields in place."""
+    card = FakeCard([_take("00001_Source.WAV")])
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    seen_at_split = []
+
+    def splitter(path, out):
+        seen_at_split.append(len(led.records()))
+        return []
+
+    list(intake(card, led, lambda when: tmp_path / "out", lambda p: None,
+                splitter=splitter))
+    assert seen_at_split == [1]
+
+
 def test_the_stop_flag_is_honoured_between_takes(tmp_path):
     card = FakeCard([_take("00001_Source.WAV"), _take("00002_Source.WAV")])
     led = Ledger("800A-F63E", root=tmp_path / "ledger")
@@ -166,3 +183,32 @@ def test_dest_for_is_called_with_the_true_start_time(tmp_path):
     assert not (tmp_path / "2026-09" / final.name).exists()
     assert started in seen_months
     assert take.closed_at in seen_months
+
+
+def test_the_same_content_under_a_new_name_is_skipped_not_recorded_twice(tmp_path):
+    """The counter restarts at 00001 after an erase, so the same bytes can
+    turn up again under a name the ledger has never seen. Identity is the
+    digest, never the name, so this must be recognised and not duplicated."""
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+
+    def same_content(card_, take, dest, **kwargs):
+        dest.write_bytes(b"identical bytes")
+        return "11" * 32
+
+    first_card = FakeCard([_take("00001_Source.WAV")])
+    list(intake(first_card, led, lambda when: tmp_path / "out", lambda p: None,
+                copier=same_content, splitter=lambda path, out: []))
+    assert len(led.records()) == 1
+    before = sorted(p.name for p in (tmp_path / "out").iterdir())
+
+    # Same digest, different card name — as if the card had been erased and
+    # the counter had wrapped back to a name already used before.
+    second_card = FakeCard([Take("00003_Other.WAV", 3, 3, WHEN)])
+    events = list(intake(second_card, led, lambda when: tmp_path / "out",
+                         lambda p: None, copier=same_content,
+                         splitter=lambda path, out: []))
+
+    assert [e.kind for e in events] == ["inventory", "copy", "skipped", "done"]
+    assert len(led.records()) == 1
+    after = sorted(p.name for p in (tmp_path / "out").iterdir())
+    assert after == before

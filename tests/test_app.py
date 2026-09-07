@@ -936,3 +936,50 @@ def test_a_recovered_orphan_can_be_renamed_by_hand(qapp, tmp_path):
     win.rename_take(0, "Le loup gris")
     assert (tmp_path / "2026-09-06_162542_le-loup-gris.wav").exists()
     assert not path.exists()
+
+
+def test_a_card_offers_recovery_even_without_a_receiver(qapp):
+    """What is plugged in decides the mode: a transmitter never exposes audio,
+    a receiver never exposes storage, so nothing has to be selected."""
+    from conteur.devices import StorageDevice
+    from pathlib import Path
+
+    win = MainWindow(find_rx=lambda: None, queue=None,
+                     find_storage=lambda: [StorageDevice("800A-F63E",
+                                                         Path("/dev/sdb"),
+                                                         Path("/dev/hidraw6"),
+                                                         True)])
+    win.refresh_device()
+    assert win.import_button.isEnabled()
+
+
+def test_no_card_disables_the_import_button(qapp):
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    win.refresh_device()
+    assert not win.import_button.isEnabled()
+
+
+def test_the_snapshot_is_cumulative_not_the_last_event(qapp):
+    """Between two polls the import thread can finish three files. A slot
+    holding only the last event would lose two, and the list would be wrong —
+    not late, wrong.
+    """
+    from conteur.intake import Event
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    for event in [Event("inventory", detail="3"),
+                  Event("recorded", take="a.wav"),
+                  Event("recorded", take="b.wav"),
+                  Event("recorded", take="c.wav")]:
+        win._snapshot.absorb(event)
+    assert win._snapshot.done == 3
+    assert win._snapshot.total == 3
+
+
+def test_a_failure_is_counted_and_kept(qapp):
+    from conteur.intake import Event
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    win._snapshot.absorb(Event("failed", take="a.wav", detail="mismatch"))
+    assert win._snapshot.failures == 1
+    assert "a.wav" in win._snapshot.lines[-1]

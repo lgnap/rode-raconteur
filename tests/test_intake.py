@@ -1,6 +1,6 @@
 """The whole chain, unrolled synchronously. No Qt, no thread, no hardware."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from pathlib import Path
@@ -383,3 +383,25 @@ def test_a_ledger_that_cannot_be_written_still_stops_everything(tmp_path):
     with pytest.raises(OSError):
         list(intake(card, led, lambda when: tmp_path / "out", lambda p: None,
                     splitter=lambda path, out, **kwargs: []))
+
+
+def test_the_duration_uses_the_file_own_sample_rate(tmp_path):
+    """A take with no bext is dated close - duration, and a duration computed
+    at 48 kHz for a file recorded at 24 kHz is out by a factor of two. A third
+    of the files take this path, and the design calls a non-48 kHz take
+    ordinary."""
+    import struct as _struct
+
+    from conteur.intake import _started
+
+    frames = 24000 * 7                      # seven seconds at 24 kHz
+    fmt = _struct.pack("<HHIIHH", 1, 1, 24000, 24000 * 2, 2, 16)
+    data = b"\x00" * (frames * 2)
+    path = tmp_path / "take.wav"
+    path.write_bytes(
+        b"RIFF" + _struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data)) + b"WAVE"
+        + b"fmt " + _struct.pack("<I", len(fmt)) + fmt
+        + b"data" + _struct.pack("<I", len(data)) + data)
+
+    take = Take("00001_Source.WAV", len(data), 3, WHEN)
+    assert _started(path, take) == WHEN - timedelta(seconds=7)

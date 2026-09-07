@@ -68,3 +68,15 @@ def test_a_card_with_no_matching_hidraw_is_still_listed():
         hidraw_lister=dict,
     )
     assert found[0].hidraw is None
+
+
+def test_the_hidraw_join_ignores_case():
+    """The volume serial comes out of the boot sector uppercased while
+    HID_UNIQ is whatever the firmware wrote. Comparing them verbatim left the
+    transmitter unmatched, and an unmatched transmitter cannot be erased."""
+    found = find_storage(
+        lister=lambda: [BlockCandidate(Path("/dev/sda"), "800A-F63E", "007c",
+                                       5_000_000)],
+        hidraw_lister=lambda: {"800af63e": Path("/dev/hidraw6")},
+    )
+    assert found[0].hidraw == Path("/dev/hidraw6")

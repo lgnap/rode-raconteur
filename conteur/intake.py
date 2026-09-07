@@ -70,11 +70,18 @@ def _started(path: Path, take) -> datetime:
         except ValueError:
             return take.closed_at
         frames = 0
+        rate = CAPTURE_RATE
         if "fmt " in found and "data" in found:
+            # The file's own rate, not the capture rate: a take recorded at
+            # anything other than 48 kHz would otherwise have its duration —
+            # and so its start time, on the third of files with no bext —
+            # scaled by the ratio between the two.
+            fh.seek(found["fmt "][0] + 4)
+            rate = struct.unpack("<I", fh.read(4))[0] or CAPTURE_RATE
             fh.seek(found["fmt "][0] + 12)
             block_align = struct.unpack("<H", fh.read(2))[0] or 4
             frames = found["data"][1] // block_align
-        return started_at(fh, closed_at=take.closed_at, rate=CAPTURE_RATE,
+        return started_at(fh, closed_at=take.closed_at, rate=rate,
                           frames=frames)
 
 

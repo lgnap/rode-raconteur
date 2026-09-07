@@ -104,6 +104,21 @@ class ImportSnapshot:
         with self._lock:
             self._pending.append(path)
 
+    def mark_finished(self) -> None:
+        """The run is over. Through the lock, like every other mutation here.
+
+        The GUI thread reads this every hundred milliseconds to decide whether
+        to stop polling; the import thread is what sets it. One unlocked
+        assignment is all it takes to make the pattern a matter of memory
+        rather than of construction.
+        """
+        with self._lock:
+            self.finished = True
+
+    def is_finished(self) -> bool:
+        with self._lock:
+            return self.finished
+
     def record_failure(self, line: str) -> None:
         """A whole-card failure: counted and kept, like a single take's.
 
@@ -339,7 +354,7 @@ class MainWindow(QMainWindow):
                 # polling and re-enable the button. Without this, an
                 # unanticipated failure leaves the status stuck on
                 # "Récupération en cours…" forever, with nobody watching.
-                snapshot.finished = True
+                snapshot.mark_finished()
 
         self._import_thread = threading.Thread(target=run, daemon=True)
         self._import_thread.start()
@@ -369,7 +384,7 @@ class MainWindow(QMainWindow):
         for path in self._snapshot.drain_pending():
             self._submit_imported(path)
         self._set_status(self._snapshot.summary())
-        if self._snapshot.finished:
+        if self._snapshot.is_finished():
             self._import_timer.stop()
             self._import_thread = None
             self.refresh_device()

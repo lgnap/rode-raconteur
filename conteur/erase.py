@@ -79,26 +79,38 @@ def erase(node_path: Path, opener=default_opener,
     try:
         node.write(ERASE_COMMAND)
         while True:
-            # Check idle timeout at the top of every iteration, regardless of which
-            # path we take. This ensures no path can hang or busy-loop indefinitely.
+            # A transmitter that answers nothing at all would otherwise hold
+            # this loop for ever, with the window frozen behind it and no way
+            # out but killing the application. Silence is not a failure — the
+            # command may well have gone through — so it ends the wait and is
+            # reported as UNKNOWN, which is what sends the caller back to
+            # re-inventory the card.
             if time.monotonic() >= deadline:
                 return EraseResult(UNKNOWN, percents)
             try:
                 data = node.read()
             except (TimeoutError, OSError) as error:
-                # Handle device disappearance (real errors, not transient ones).
                 if isinstance(error, OSError) and not isinstance(error, TimeoutError):
                     if error.errno in (errno.ENODEV, errno.ENXIO, errno.EIO):
                         return EraseResult(REENUMERATED if percents else FAILED, percents)
                     if error.errno not in (errno.EAGAIN, errno.EINTR):
-                        # Unknown error: propagate rather than silently converting.
+                        # Anything else is a real error, and turning it into a
+                        # retry would hide it behind ten seconds of silence.
                         raise
-                # Both TimeoutError and transient OSError (EAGAIN, EINTR) mean nothing
-                # arrived and should be retried, so pause before retrying to avoid busy-loop.
+                # Nothing arrived, so we go round again — but a non-blocking
+                # node returns EAGAIN immediately, which measured out at 2.4
+                # million reads a second: one core pinned for the whole erase,
+                # for nothing. The pause costs the erase nothing (the reports
+                # arrive in a burst at the end anyway) and costs the machine
+                # everything it was burning
+                # (test_persistent_timeouts_do_not_burn_cpu).
                 time.sleep(RETRY_PAUSE_S)
                 continue
-            # Reset deadline only when a report actually arrives, so silence is silence
-            # whatever produced it.
+            # The deadline is pushed back only when a report actually arrives.
+            # Resetting it on a timeout or a retry would make the wait renew
+            # itself for ever on a transmitter that never answers — the hang
+            # the check at the top of the loop exists to prevent
+            # (test_persistent_transient_errors_do_not_hang).
             deadline = time.monotonic() + idle_timeout_s
             if len(data) < 4 or data[0] != REPLY_ID or data[1] != OPCODE:
                 continue

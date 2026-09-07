@@ -1124,7 +1124,7 @@ def test_take_submission_always_happens_on_the_gui_thread(qapp, tmp_path, monkey
     win._import_thread.join(5)
     win._refresh_import()
 
-    assert win._snapshot.finished
+    assert win._snapshot.is_finished()
     assert win._snapshot.done == 2
     assert len(threads_seen) == 2
     assert all(t is main_thread for t in threads_seen)
@@ -1216,7 +1216,7 @@ def test_two_cards_are_cumulative_and_finished_only_after_the_second(
     # Card 1 is done; card 2's own first copy is deliberately still blocked.
     # The run -- and therefore the button and the timer -- must still read
     # as in progress.
-    assert win._snapshot.finished is False
+    assert win._snapshot.is_finished() is False
     win._refresh_import()
     assert win._import_timer.isActive()
     assert not win.import_button.isEnabled()
@@ -1227,7 +1227,7 @@ def test_two_cards_are_cumulative_and_finished_only_after_the_second(
 
     assert win._snapshot.total == 3   # 1 + 2, not replaced by the second card
     assert win._snapshot.done == 3    # the run did not stop after card 1's "done"
-    assert win._snapshot.finished is True
+    assert win._snapshot.is_finished() is True
     assert not win._import_timer.isActive()
     assert win.import_button.isEnabled()
 
@@ -1396,7 +1396,7 @@ def test_a_card_that_fails_to_open_does_not_stop_the_next_one(
     win._import_thread.join(5)
     win._refresh_import()
 
-    assert win._snapshot.finished
+    assert win._snapshot.is_finished()
     assert any("boom" in line for line in win._snapshot.lines)
     assert win._snapshot.failures == 1
     assert win._snapshot.done == 1     # the second, good card was still imported

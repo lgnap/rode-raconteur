@@ -114,7 +114,12 @@ def find_storage(lister=default_lister,
     one to use, since the transmitter's carries no filesystem, runs on a slower
     link and arrives root-only.
     """
-    hid = hidraw_lister()
+    # Both sides of the join are folded to the same case: the volume serial
+    # comes out of the boot sector uppercased, while HID_UNIQ is whatever the
+    # firmware wrote. Comparing them verbatim would leave a transmitter
+    # unmatched — and so unerasable — for a difference of case alone.
+    hid = {key.replace("-", "").upper(): node
+           for key, node in hidraw_lister().items()}
     best: dict[str, BlockCandidate] = {}
     for candidate in lister():
         if not candidate.size or candidate.serial is None:
@@ -127,7 +132,7 @@ def find_storage(lister=default_lister,
         StorageDevice(
             serial=serial,
             block=candidate.node,
-            hidraw=hid.get(serial.replace("-", "")),
+            hidraw=hid.get(serial.replace("-", "").upper()),
             via_case=candidate.product_id == CASE_STORAGE_PID,
         )
         for serial, candidate in sorted(best.items())

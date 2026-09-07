@@ -12,10 +12,14 @@ from PySide6.QtWidgets import (
     QMainWindow, QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
+from conteur.card import Card
+from conteur.devices import find_storage as default_find_storage
+from conteur.intake import intake
 from conteur.job import name_recording
 from conteur.job import rename_take as rename_take_file
+from conteur.ledger import Ledger
 from conteur.naming import ORIGIN_FAILED, ORIGIN_MANUAL, UNNAMED, origin_label
-from conteur.orphans import find_orphans
+from conteur.orphans import find_orphans, parse_timestamp
 from conteur.paths import FOLDER, build_name, destination_dir, music_dir, unique_path
 from conteur.recorder import record, write_wav
 from conteur.rx_device import find_rx as default_find_rx
@@ -31,7 +35,9 @@ MODEL_FAILED = "Modèle de transcription indisponible"
 AUDIO_UNAVAILABLE = "Sous-système audio indisponible"
 MISSING_FILE = "Fichier introuvable"
 RENAME_FAILED = "Renommage impossible"
+IMPORT_RUNNING = "Récupération en cours…"
 POLL_MS = 2000
+IMPORT_POLL_MS = 200
 SHUTDOWN_TIMEOUT_S = 30.0
 INCOMPLETE = "incomplet"
 PENDING = "transcription…"
@@ -63,12 +69,110 @@ def describe_error(error: BaseException) -> str:
     return f"{error.__class__.__name__} : {text}"
 
 
+class ImportSnapshot:
+    """What the import thread has done so far, read by the GUI thread.
+
+    Cumulative rather than "the last event": between two polls the thread can
+    finish three files, and a single-slot state would lose two of them. The
+    list on screen would then be wrong, not merely late. It stays cumulative
+    across cards too — several cards can be imported in one run, one after
+    another, and `total`/`done` describe the whole run, not just the card
+    currently being read.
+
+    Nothing here emits a Qt signal, and nothing here touches a Qt widget: both
+    a signal delivered into an already-destroyed window and a QListWidget
+    mutated outside the GUI thread crash or corrupt the process. Handing a
+    freshly-imported take to the naming queue means calling `add_take`, which
+    is a widget mutation — so a path is only queued here (`queue_submit`) and
+    handed to `MainWindow._submit_imported` later, from the GUI thread, by
+    `_refresh_import`. That is exactly the pattern already used for the level
+    meter, and the one that resolved this project's model-loading segfault.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.total = 0
+        self.done = 0
+        self.failures = 0
+        self.current: str | None = None
+        self.finished = False
+        self.lines: list[str] = []
+        self._pending: list = []
+
+    def queue_submit(self, path) -> None:
+        """Record a take to hand to the naming queue — never do it here."""
+        with self._lock:
+            self._pending.append(path)
+
+    def mark_finished(self) -> None:
+        """The run is over. Through the lock, like every other mutation here.
+
+        The GUI thread reads this every hundred milliseconds to decide whether
+        to stop polling; the import thread is what sets it. One unlocked
+        assignment is all it takes to make the pattern a matter of memory
+        rather than of construction.
+        """
+        with self._lock:
+            self.finished = True
+
+    def is_finished(self) -> bool:
+        with self._lock:
+            return self.finished
+
+    def record_failure(self, line: str) -> None:
+        """A whole-card failure: counted and kept, like a single take's.
+
+        Routed through the lock like every other mutation of `.lines`, and
+        counted in `.failures` so it also reaches the finished summary — the
+        only place a failure surfaces on the status line.
+        """
+        with self._lock:
+            self.failures += 1
+            self.lines.append(line)
+
+    def drain_pending(self) -> list:
+        """Take ownership of the paths queued since the last drain."""
+        with self._lock:
+            pending, self._pending = self._pending, []
+        return pending
+
+    def absorb(self, event) -> None:
+        with self._lock:
+            if event.kind == "inventory":
+                # += rather than =: a second card's inventory must add to the
+                # first's, not erase it.
+                self.total += int(event.detail or 0)
+            elif event.kind == "copy":
+                self.current = event.take
+            elif event.kind == "recorded":
+                self.done += 1
+                self.lines.append(f"{event.take} → importé")
+            elif event.kind == "skipped":
+                self.lines.append(f"{event.take} → déjà importé")
+            elif event.kind == "failed":
+                self.failures += 1
+                self.lines.append(f"{event.take} → échec : {event.detail}")
+            elif event.kind == "done":
+                # Marks the end of one card's intake, not of the whole run:
+                # with several cards, the run loop keeps going. `finished` is
+                # set once, by the thread itself, after every card is done.
+                self.current = None
+
+    def summary(self) -> str:
+        with self._lock:
+            if self.finished:
+                tail = f", {self.failures} échec(s)" if self.failures else ""
+                return f"Récupération terminée : {self.done}/{self.total}{tail}"
+            where = f" — {self.current}" if self.current else ""
+            return f"{IMPORT_RUNNING} {self.done}/{self.total}{where}"
+
+
 class MainWindow(QMainWindow):
     take_named = Signal(int, str, str)
     naming_failed = Signal(str, str)
 
     def __init__(self, find_rx=None, queue=None, pa=None, pa_factory=None,
-                 orphan_root=None):
+                 orphan_root=None, find_storage=None):
         super().__init__()
         self._pa = pa
         # PortAudio freezes the device list at Pa_Initialize() and PyAudio
@@ -77,8 +181,17 @@ class MainWindow(QMainWindow):
         self._pa_factory = pa_factory
         self._orphan_root = orphan_root
         self._find_rx = find_rx or self._find_rx_via_pa
+        self._find_storage = find_storage or default_find_storage
         self._queue = queue
         self._stop = threading.Event()
+        # A separate flag from `_stop`: that one belongs to audio capture
+        # (cleared by _start_capture, set by _finish_capture). Sharing it
+        # would mean stopping a recording also stops an import in progress,
+        # and starting a recording would clear an import's stop request.
+        self._import_stop = threading.Event()
+        self._cards: list = []
+        self._snapshot = ImportSnapshot()
+        self._import_thread: threading.Thread | None = None
         self._rows: list[QListWidgetItem] = []
         self._takes_meta: list[tuple[Path, datetime]] = []
         # Rows renamed by hand: a late automatic result (often a "failed" due
@@ -97,6 +210,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Conteur")
         self.status_label = QLabel()
         self.record_button = QPushButton("Enregistrer")
+        self.import_button = QPushButton("Récupérer")
+        self.import_button.setEnabled(False)
         self.level_bar = QProgressBar()
         self.level_bar.setRange(int(DBFS_FLOOR), 0)
         self.level_bar.setValue(int(DBFS_FLOOR))
@@ -106,6 +221,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
         layout.addWidget(self.record_button)
+        layout.addWidget(self.import_button)
         layout.addWidget(self.level_bar)
         layout.addWidget(self.takes)
         holder = QWidget()
@@ -113,6 +229,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(holder)
 
         self.record_button.clicked.connect(self.toggle_recording)
+        self.import_button.clicked.connect(self.start_import)
         self.takes.itemDoubleClicked.connect(self._ask_rename)
         self._capture: threading.Thread | None = None
         self._samples = None
@@ -125,6 +242,9 @@ class MainWindow(QMainWindow):
         self._level_timer = QTimer(self)
         self._level_timer.setInterval(100)
         self._level_timer.timeout.connect(self._refresh_level)
+
+        self._import_timer = QTimer(self)
+        self._import_timer.timeout.connect(self._refresh_import)
 
         self.take_named.connect(self._apply_name)
         self.naming_failed.connect(self.report_naming_error)
@@ -197,6 +317,78 @@ class MainWindow(QMainWindow):
             taken += 1
         return taken
 
+    def start_import(self) -> None:
+        """Drain the intake generator on a thread. Five lines, on purpose."""
+        if self._import_thread is not None or not self._cards:
+            return
+        self._clear_status()
+        self._snapshot = ImportSnapshot()
+        self._import_stop.clear()
+        cards = list(self._cards)
+        stop = self._import_stop
+        snapshot = self._snapshot
+
+        def run():
+            try:
+                for device in cards:              # one card at a time: reading
+                    try:                          # two at once is slower
+                        with device.block.open("rb") as fh:
+                            card = Card(fh)
+                            ledger = Ledger(card.serial)
+                            # queue_submit only records the path; it must not
+                            # call into Qt, since this closure runs on the
+                            # import thread. _refresh_import hands each one to
+                            # _submit_imported from the GUI thread instead.
+                            for event in intake(card, ledger, destination_dir,
+                                                snapshot.queue_submit, stop=stop):
+                                snapshot.absorb(event)
+                    except BaseException as error:      # noqa: BLE001 - never a silent dead thread
+                        # A card that vanishes mid-import, one whose boot
+                        # sector no longer parses as FAT32, or any other
+                        # failure inside intake() (a malformed provisional
+                        # file breaking _started()'s struct.unpack, say) is
+                        # reported, and the next card is still attempted.
+                        snapshot.record_failure(f"{device.block} : {error}")
+            finally:
+                # Whatever happens above, the GUI thread must be told to stop
+                # polling and re-enable the button. Without this, an
+                # unanticipated failure leaves the status stuck on
+                # "Récupération en cours…" forever, with nobody watching.
+                snapshot.mark_finished()
+
+        self._import_thread = threading.Thread(target=run, daemon=True)
+        self._import_thread.start()
+        self.import_button.setEnabled(False)
+        self._import_timer.start(IMPORT_POLL_MS)
+
+    def _submit_imported(self, path: Path) -> None:
+        when = parse_timestamp(path.name) or datetime.now()
+        row = self.add_take(path.name)
+        self._takes_meta.append((path, when))
+
+        def on_done(_src, result, error=None, row=row, path=path):
+            if result is None:
+                self.take_named.emit(row, path.name, ORIGIN_FAILED)
+                if error is not None:
+                    self.naming_failed.emit(path.name, describe_error(error))
+            else:
+                self.take_named.emit(row, result.path.name, result.origin)
+
+        self._ensure_queue(self._naming_runner)
+        self._queue.submit(path, when, on_done)
+
+    def _refresh_import(self) -> None:
+        # Handing a take to the naming queue means mutating the take list —
+        # a Qt widget — so it happens here, on the GUI thread, never inside
+        # the import thread that merely queued the path.
+        for path in self._snapshot.drain_pending():
+            self._submit_imported(path)
+        self._set_status(self._snapshot.summary())
+        if self._snapshot.is_finished():
+            self._import_timer.stop()
+            self._import_thread = None
+            self.refresh_device()
+
     def _start_model_loading(self) -> None:
         if self._model_loader is not None:
             return
@@ -235,6 +427,14 @@ class MainWindow(QMainWindow):
         if device is None:
             device = self._rescan_devices()
         self.record_button.setEnabled(device is not None)
+        # What is plugged in decides the mode: a transmitter never exposes
+        # audio, a receiver never exposes storage. Nothing to select.
+        try:
+            self._cards = self._find_storage()
+        except OSError:
+            self._cards = []
+        self.import_button.setEnabled(
+            bool(self._cards) and self._import_thread is None)
         self._set_status((device.name if device else NO_DEVICE) + self._model_suffix())
 
     def _model_suffix(self) -> str:
@@ -428,7 +628,10 @@ class MainWindow(QMainWindow):
         """Clean shutdown: nothing pending is thrown away without its chance.
 
         A capture in progress is written, jobs already queued get the allotted
-        time to finish, then the PortAudio context is released.
+        time to finish, then the PortAudio context is released. An import in
+        progress is asked to stop between takes — the source is read-only, so
+        there is nothing to flush — and given the same grace period as the
+        naming queue to actually do so.
         """
         if self._shutdown_done:
             return
@@ -436,7 +639,13 @@ class MainWindow(QMainWindow):
         self._poll.stop()
         if self._capture is not None:
             self._finish_capture()
+        self._stop.set()
         self._level_timer.stop()
+        self._import_timer.stop()
+        self._import_stop.set()
+        thread, self._import_thread = self._import_thread, None
+        if thread is not None:
+            thread.join(timeout_s)
         queue, self._queue = self._queue, None
         if queue is not None:
             queue.stop()

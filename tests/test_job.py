@@ -220,3 +220,36 @@ def test_the_audible_threshold_leaves_room_below_a_faint_take(tmp_path):
     from conteur.job import AUDIBLE_DBFS
 
     assert AUDIBLE_DBFS <= -55.0
+
+
+def test_naming_an_import_keeps_the_name_the_card_carried(tmp_path):
+    """Decision 8 keeps the card's name on purpose: it will not be
+    reproducible, since the take counter restarts at 00001 after an erase.
+    Rebuilding the name from the timestamp and the slug alone threw it away."""
+    path = _wav(tmp_path, _voice(),
+                name="2026-09-07_111030_00002_Source-Baffle__sans-nom.wav")
+    model = FakeModel([Seg(0.0, 4.0, "La licorne")])
+    result = name_recording(path, WHEN, model,
+                            title_fn=lambda t: ("jamais", "title"))
+    assert result.path.name == \
+        "2026-09-07_111030_00002_Source-Baffle__la-licorne.wav"
+    assert not path.exists()
+
+
+def test_naming_a_split_part_keeps_its_rank_and_its_own_start(tmp_path):
+    path = _wav(tmp_path, _voice(),
+                name="2026-09-07_111225_00002_Source-Baffle_02_sur_06__sans-nom.wav")
+    model = FakeModel([Seg(0.0, 4.0, "Le loup arrive")])
+    result = name_recording(path, WHEN, model,
+                            title_fn=lambda t: ("jamais", "title"))
+    assert result.path.name == \
+        "2026-09-07_111225_00002_Source-Baffle_02_sur_06__le-loup-arrive.wav"
+
+
+def test_naming_a_take_recorded_here_is_unchanged(tmp_path):
+    """No `__` segment, so the name is still rebuilt from the timestamp."""
+    path = _wav(tmp_path, _voice())
+    model = FakeModel([Seg(0.0, 4.0, "La licorne")])
+    result = name_recording(path, WHEN, model,
+                            title_fn=lambda t: ("jamais", "title"))
+    assert result.path.name == "2026-09-06_143208_la-licorne.wav"

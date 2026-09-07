@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Append to a WAV file name what transcription recognises inside it.
+"""Add to a WAV file name what transcription recognises inside it.
 
 Same recognition as the application — same model, VAD, threshold and slug
 rules — because the decision comes from the shared `conteur.job.decide_name`,
 not from a copy that would eventually drift.
 
-Unlike the application, the existing name is **kept**: the slug is appended to
+Unlike the application, the existing name is **kept**: the slug is attached to
 it. That is what lets you name parts cut at markers without losing the
-indication of what belonged together, or breaking their rejoining.
+indication of what belonged together, or breaking their rejoining. A
+provisional `__sans-nom` tail is replaced rather than kept, so a file never
+carries the placeholder and a real name at once.
 
     nommer-morceaux.py DOSSIER_OU_FICHIERS...
 
@@ -54,12 +56,29 @@ def collect(targets: list[Path]) -> list[Path]:
     return [p for p in found if not p.name.startswith(".")]
 
 
+def named(stem: str, slug: str) -> str:
+    """The stem with the slug attached, replacing a placeholder if there is one.
+
+    Appending unconditionally kept `__sans-nom` in the middle of the name for
+    good — `..._00002_Source-Baffle__sans-nom__la-licorne` — and the
+    application produces a different shape from the same file, so whichever ran
+    first decided which wrong name you got. `is_placeholder` is the one
+    authority on what a provisional tail looks like, shared with orphans.py so
+    the two cannot drift.
+    """
+    if "__" in stem:
+        head, tail = stem.rsplit("__", 1)
+        if is_placeholder(tail):
+            return f"{head}__{slug}"
+    return f"{stem}__{slug}"
+
+
 def annotate(path: Path, model) -> tuple[Path, str] | None:
-    """Rename by appending the recognised slug. Returns None if already done."""
+    """Rename with the recognised slug. Returns None if already done."""
     if already_annotated(path.stem):
         return None
     slug, origin = decide_name(read_samples(path), model)
-    target = unique_path(path.parent, f"{path.stem}__{slug}{path.suffix}")
+    target = unique_path(path.parent, f"{named(path.stem, slug)}{path.suffix}")
     path.rename(target)
     return target, origin
 

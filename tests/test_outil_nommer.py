@@ -94,3 +94,24 @@ def test_edge_case_empty_slug_after_double_underscore(outil):
     """An edge case: a file with __ but empty slug after it."""
     # Empty string does not match SLUG regex, so should not be annotated.
     assert not outil.already_annotated("00001_Source-Baffle__")
+
+
+@pytest.mark.parametrize("stem, attendu", [
+    # An unnamed import: the placeholder is replaced, not kept in the middle.
+    ("2026-09-07_111030_00002_Source-Baffle__sans-nom",
+     "2026-09-07_111030_00002_Source-Baffle__la-licorne"),
+    # Its collision suffix counts as a placeholder too.
+    ("2026-09-07_111030_00002_Source-Baffle__sans-nom-2",
+     "2026-09-07_111030_00002_Source-Baffle__la-licorne"),
+    # A part cut at markers: its time range is not a placeholder, so the slug
+    # is appended and the range survives.
+    ("01_sur_03__00-00.000_a_01-20.799",
+     "01_sur_03__00-00.000_a_01-20.799__la-licorne"),
+    # Straight off the device, no "__" at all.
+    ("00003_Ambiance-Personne", "00003_Ambiance-Personne__la-licorne"),
+])
+def test_the_placeholder_is_replaced_never_kept_alongside(outil, stem, attendu):
+    """Appending after `__sans-nom` fixed the placeholder in the middle of the
+    name for good, and the application produced a different shape from the
+    same file — whichever ran first decided which wrong name you got."""
+    assert outil.named(stem, "la-licorne") == attendu

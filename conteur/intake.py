@@ -1,0 +1,130 @@
+"""The whole chain, as a generator: inventory, copy, record, split, submit.
+
+A generator rather than a thread, deliberately. The thread lives in app.py and
+does nothing but drain this; here the sequence can be unrolled synchronously in
+a test, with no Qt, no thread and no hardware — which is how the ordering that
+matters gets verified rather than hoped for.
+"""
+
+import struct
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+from conteur.bwf import chunks, started_at
+from conteur.bwf import split as split_at_markers
+from conteur.card import VerificationError, copy_verified
+from conteur.ledger import Ledger, Record
+from conteur.naming import UNNAMED
+from conteur.paths import unique_path
+from conteur.signal import CAPTURE_RATE
+
+
+@dataclass(frozen=True)
+class Event:
+    kind: str
+    take: str | None = None
+    detail: str | None = None
+
+
+def import_name(started: datetime, card_name: str) -> str:
+    """`<start>_<name on the card>__<slug>.wav`.
+
+    The start time sorts it with the takes recorded directly. The card name is
+    kept because it will not be reproducible — the take counter restarts at
+    00001 after an erase. The double underscore before the slug is the
+    idempotence marker that tools/nommer-morceaux.py already relies on.
+    """
+    stem = Path(card_name).stem
+    return f"{started.strftime('%Y-%m-%d_%H%M%S')}_{stem}__{UNNAMED}.wav"
+
+
+def _started(path: Path, take) -> datetime:
+    """The take's start time, from `bext` or from close time and duration.
+
+    A file whose chunks cannot be parsed — not a WAVE file at all — falls back
+    to the take's close time, same as when `bext` itself is simply absent.
+    """
+    with path.open("rb") as fh:
+        try:
+            found = chunks(fh)
+        except ValueError:
+            return take.closed_at
+        frames = 0
+        if "fmt " in found and "data" in found:
+            fh.seek(found["fmt "][0] + 12)
+            block_align = struct.unpack("<H", fh.read(2))[0] or 4
+            frames = found["data"][1] // block_align
+        return started_at(fh, closed_at=take.closed_at, rate=CAPTURE_RATE,
+                          frames=frames)
+
+
+def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
+           copier=copy_verified, splitter=split_at_markers,
+           stop=None) -> Iterator[Event]:
+    """Import one card, yielding an event at every step.
+
+    `dest_for` maps a recording's start time to the folder it belongs in — a
+    take is filed by the month it was recorded, not by the month it happens to
+    be imported. The provisional copy is written under `dest_for(take.closed_at)`
+    because the true start time can only be read once the file exists; once it
+    is known, the file is moved to `dest_for(started)` under its final name.
+    When both resolve to the same folder — the common case — that move is a
+    plain rename.
+
+    Two orders are not negotiable. Recording comes *after* verification: a
+    ledger noting an unverified copy is an erase lock that opens on nothing.
+    And splitting comes *after* recording: it destroys comparability, since a
+    split take no longer exists in the form that was hashed.
+
+    A failure on one take does not stop the others — the source is read-only,
+    so a failed import costs time and never data.
+    """
+    takes = card.takes()
+    yield Event("inventory", detail=str(len(takes)))
+    digests: dict[str, str] = {r.card_name: r.digest for r in ledger.records()}
+
+    for take in takes:
+        if stop is not None and stop.is_set():
+            break
+        if take.name in digests:
+            yield Event("skipped", take=take.name)
+            continue
+
+        yield Event("copy", take=take.name)
+        provisional_dir = dest_for(take.closed_at)
+        provisional_dir.mkdir(parents=True, exist_ok=True)
+        provisional = unique_path(provisional_dir, f"{take.name}.incoming")
+        try:
+            digest = copier(card, take, provisional)
+        except (VerificationError, OSError) as error:
+            yield Event("failed", take=take.name, detail=str(error))
+            continue
+        if ledger.has(digest):
+            provisional.unlink(missing_ok=True)
+            yield Event("skipped", take=take.name)
+            continue
+        yield Event("verified", take=take.name)
+
+        started = _started(provisional, take)
+        final_dir = dest_for(started)
+        final_dir.mkdir(parents=True, exist_ok=True)
+        final = unique_path(final_dir, import_name(started, take.name))
+        provisional.rename(final)
+        ledger.add(Record(digest=digest, card_name=take.name, size=take.size,
+                          path=final, imported_at=datetime.now()))
+        digests[take.name] = digest
+        yield Event("recorded", take=take.name, detail=str(final))
+
+        parts = splitter(final, final.parent / final.stem)
+        if parts:
+            yield Event("split", take=take.name, detail=str(len(parts)))
+            for part in parts:
+                submit(part)
+                yield Event("submitted", take=part.name)
+        else:
+            submit(final)
+            yield Event("submitted", take=final.name)
+
+    yield Event("done")

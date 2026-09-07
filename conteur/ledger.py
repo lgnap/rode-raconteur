@@ -47,21 +47,21 @@ class Ledger:
         # lock closed. The safe failure is the natural one; no guard needed.
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            out = []
+            for item in raw.get("takes", []):
+                try:
+                    out.append(Record(
+                        digest=item["digest"],
+                        card_name=item["card_name"],
+                        size=int(item["size"]),
+                        path=Path(item["path"]),
+                        imported_at=datetime.fromisoformat(item["imported_at"]),
+                    ))
+                except (KeyError, TypeError, ValueError):
+                    continue
+            return out
+        except (OSError, ValueError, AttributeError, TypeError, KeyError):
             return []
-        out = []
-        for item in raw.get("takes", []):
-            try:
-                out.append(Record(
-                    digest=item["digest"],
-                    card_name=item["card_name"],
-                    size=int(item["size"]),
-                    path=Path(item["path"]),
-                    imported_at=datetime.fromisoformat(item["imported_at"]),
-                ))
-            except (KeyError, TypeError, ValueError):
-                continue
-        return out
 
     def records(self) -> list[Record]:
         return list(self._records)

@@ -93,3 +93,35 @@ def test_an_unreadable_ledger_behaves_as_an_empty_one(tmp_path):
     led = Ledger("800A-F63E", root=tmp_path)
     assert led.records() == []
     assert led.erase_allowed([_take("00001_Source.WAV", 10)], {}) is False
+
+
+def test_a_malformed_ledger_file_behaves_as_an_empty_one(tmp_path):
+    """Well-formed JSON of the wrong shape must not crash Ledger.__init__.
+    A bare list, null, a scalar, or 'takes' bound to a non-list all return
+    an empty ledger that keeps the erase lock closed."""
+    import json
+
+    # Test bare list
+    (tmp_path / "800A-F63E.json").write_text(json.dumps([1, 2, 3]))
+    led = Ledger("800A-F63E", root=tmp_path)
+    assert led.records() == []
+    assert led.erase_allowed([_take("00001_Source.WAV", 10)], {}) is False
+
+    # Test 'takes' as non-list
+    (tmp_path / "800A-F63E.json").write_text(json.dumps({"takes": 7}))
+    led = Ledger("800A-F63E", root=tmp_path)
+    assert led.records() == []
+    assert led.erase_allowed([_take("00001_Source.WAV", 10)], {}) is False
+
+
+def test_a_tampered_destination_file_locks_erasing_again(tmp_path):
+    """The lock is computed from the bytes on disk, not from what the ledger
+    remembers. A file replaced or corrupted in place must close it again."""
+    led = Ledger("800A-F63E", root=tmp_path)
+    record = _record(tmp_path, "00001_Source.WAV", 10)
+    led.add(record)
+    assert led.erase_allowed([_take("00001_Source.WAV", 10)],
+                             {"00001_Source.WAV": record.digest}) is True
+    record.path.write_bytes(b"tampered")
+    assert led.erase_allowed([_take("00001_Source.WAV", 10)],
+                             {"00001_Source.WAV": record.digest}) is False

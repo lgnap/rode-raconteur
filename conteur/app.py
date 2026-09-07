@@ -430,19 +430,33 @@ class MainWindow(QMainWindow):
     def erasable(self) -> list[tuple[str, bool, str]]:
         """One row per card the last import looked at: serial, allowed, reason.
 
-        A card is offered only when the import accounted for all of it — an
-        incomplete one is still listed, with the reason, so the user knows why
-        it is locked rather than wondering where it went. There is
+        A card is offered only when the import accounted for all of it *and*
+        that account holds something: a verdict over zero takes is vacuously
+        complete, and `takes()` reports a filtered view — an open take is
+        dropped from it — so an empty list never proves an empty card. An
+        incomplete one is still listed, with how many takes are still
+        missing, so the user knows why it is locked rather than wondering
+        where the row went. There is
         deliberately no row that erases everything: a global control would
         hide which device is being wiped, and this is the one action that
         cannot be undone.
         """
         rows = []
         for serial, verdict in sorted(self._snapshot.verdicts.items()):
-            if verdict.complete:
-                rows.append((serial, True, f"{len(verdict.digests)} prise(s) vérifiée(s)"))
+            if verdict.complete and verdict.digests:
+                rows.append((serial, True,
+                             f"{verdict.verified} prise(s) vérifiée(s)"))
+            elif not verdict.digests:
+                # A verdict holding no digests proves nothing, and a card
+                # whose takes() came back empty is not the same thing as an
+                # empty card: an open take — a recording in progress — is
+                # filtered out of that list, as is anything in a
+                # subdirectory. Offering "Effacer — 0 prise(s) vérifiée(s)"
+                # would be an armed button with a nonsense label on it.
+                rows.append((serial, False, "aucune prise vérifiée"))
             else:
-                rows.append((serial, False, "des prises n'ont pas été copiées"))
+                missing = max(verdict.takes - verdict.verified, 1)
+                rows.append((serial, False, f"{missing} prise(s) non copiée(s)"))
         return rows
 
     def _rebuild_erase_controls(self) -> None:
@@ -461,7 +475,12 @@ class MainWindow(QMainWindow):
         two-second device poll, which touches none of that.
         """
         for button in self._erase_buttons:
-            self._erase_layout.removeWidget(button)
+            # setParent(None), not removeWidget: removeWidget takes the button
+            # out of the layout but neither hides it nor reparents it, so a
+            # button just removed stays painted on the window until the
+            # deleteLater below is processed — one event loop turn during
+            # which a stale erase control is still on screen and clickable.
+            button.setParent(None)
             button.deleteLater()
         self._erase_buttons = []
         for serial, allowed, reason in self.erasable():
@@ -498,17 +517,27 @@ class MainWindow(QMainWindow):
     def _erase_one(self, device: StorageDevice, verdict: CardVerdict) -> None:
         """Open one card and run its erase, routing events to the status line.
 
-        Runs synchronously on the GUI thread, deliberately: measured at
-        1.2-1.8 s regardless of how much is stored, against minutes for an
-        import, so it does not warrant the snapshot/timer machinery a full
-        import needs. If it ever grows, it moves to the import thread — not
-        to a second one.
+        Runs synchronously on the GUI thread, and what it blocks on is not
+        the erase itself: the HID command takes 1.2-1.8 s whatever the card
+        holds, but `erase_card` first re-hashes every local copy the verdict
+        rests on — budgeted at 80 s for 30 GB, an order of magnitude more,
+        and scaling with exactly the quantity the command does not. That is
+        why the status line is set before the generator is drained: a window
+        that says nothing for a minute and a half reads as hung, and a user
+        who thinks it is hung reaches for the hardware — which, mid-erase, is
+        the one thing that can put the command on the wrong transmitter.
+
+        It still does not warrant the snapshot/timer machinery a full import
+        needs. If it grows further, it moves to the import thread — not to a
+        second one.
 
         `erase_card` already refuses on a serial mismatch, a stale inventory,
-        a missing or tampered local copy, and a missing HID node: this method
-        only reports what it decides, never re-checks it.
+        a take in progress, a verdict proving nothing, a missing or tampered
+        local copy, a missing HID node and a node that has changed hands
+        since: this method only reports what it decides, never re-checks it.
         """
         serial = verdict.serial
+        self._set_status(f"{serial} : vérification des copies…", sticky=True)
         try:
             with device.block.open("rb") as fh:
                 card = Card(fh)
@@ -519,6 +548,14 @@ class MainWindow(QMainWindow):
                         # offering to erase it again would be nonsense.
                         self._snapshot.verdicts.pop(serial, None)
                         self._set_status(f"{serial} : carte effacée", sticky=True)
+                    elif event.kind == "reinventoried":
+                        # What the card actually holds now, read back rather
+                        # than assumed. Unreadable means mid-reenumeration,
+                        # the normal end of an erase, not a failure.
+                        found = ("état non relu" if event.detail is None
+                                 else f"{event.detail} prise(s) restante(s)")
+                        self._set_status(f"{serial} : carte effacée, {found}",
+                                         sticky=True)
                     elif event.kind == "refused":
                         self._set_status(f"{serial} : {event.detail}", sticky=True)
                     elif event.kind in ("failed", "unknown"):

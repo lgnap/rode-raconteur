@@ -16,9 +16,12 @@ WHEN = datetime(2026, 9, 7, 11, 14, 32)
 class FakeCard:
     serial = "800A-F63E"
 
-    def __init__(self, takes, content=b"abc"):
+    def __init__(self, takes, content=b"abc", open_takes=0):
         self._takes = takes
         self.content = content
+        # What Card.takes() reports having dropped: zero-byte entries, which
+        # are open recordings rather than empty files.
+        self.open_takes = open_takes
 
     def takes(self):
         return list(self._takes)
@@ -494,6 +497,45 @@ def test_the_verdict_carries_every_take_on_the_card(tmp_path):
     assert len(verdict.digests) == 1        # both takes hold the same bytes
     assert verdict.complete is True
     assert led.erase_allowed(verdict.digests) is True
+
+
+def test_the_verdict_counts_the_takes_it_accounted_for(tmp_path):
+    """The counts answer "how many am I still missing", which neither set can:
+    two identical takes share one digest."""
+    card = FakeCard([_take("00001_S.WAV"), _take("00002_S.WAV")])
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    events = list(intake(card, led, lambda w: tmp_path / "out", lambda p: None,
+                         splitter=lambda path, out, **kwargs: []))
+    verdict = [e.verdict for e in events if e.kind == "verdict"][0]
+    assert (verdict.takes, verdict.verified) == (2, 2)
+    assert len(verdict.digests) == 1
+
+
+def test_a_card_mid_recording_is_never_complete(tmp_path):
+    """A zero-byte entry is an open take: its clusters already hold audio,
+    finalised when the transmitter is docked again. It cannot be copied, so
+    the card is not fully copied, however well the rest went."""
+    card = FakeCard([_take("00001_S.WAV")], open_takes=1)
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    events = list(intake(card, led, lambda w: tmp_path / "out", lambda p: None,
+                         splitter=lambda path, out, **kwargs: []))
+    verdict = [e.verdict for e in events if e.kind == "verdict"][0]
+    assert verdict.complete is False
+    assert (verdict.takes, verdict.verified) == (2, 1)
+    # The take that was copied is still accounted for; only the lock closes.
+    assert len(verdict.digests) == 1
+
+
+def test_a_card_reporting_no_take_produces_no_proof(tmp_path):
+    """A verdict over nothing is vacuously complete, which is why nothing
+    downstream may treat `complete` alone as permission to erase."""
+    card = FakeCard([])
+    led = Ledger("800A-F63E", root=tmp_path / "ledger")
+    events = list(intake(card, led, lambda w: tmp_path / "out", lambda p: None,
+                         splitter=lambda path, out, **kwargs: []))
+    verdict = [e.verdict for e in events if e.kind == "verdict"][0]
+    assert verdict.digests == frozenset()
+    assert (verdict.takes, verdict.verified) == (0, 0)
 
 
 def test_a_take_that_failed_leaves_the_verdict_incomplete(tmp_path):

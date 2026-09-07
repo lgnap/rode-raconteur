@@ -15,6 +15,7 @@ from pathlib import Path
 from conteur.bwf import chunks, cue_points, started_at
 from conteur.bwf import split as split_at_markers
 from conteur.card import VerificationError, copy_verified, sha256_file
+from conteur.devices import default_hidraw_lister
 from conteur.erase import FAILED, REENUMERATED, REFUSED, SUCCESS, UNKNOWN
 from conteur.erase import erase as erase_over_hid
 from conteur.ledger import Ledger, Record, name_prefix
@@ -31,11 +32,20 @@ class CardVerdict:
     already held. `complete` is false as soon as one take produced none, so a
     card with a failure cannot unlock erasing without any special case.
     `inventory` is the cheap fingerprint the erase re-checks before firing.
+
+    `takes` and `verified` are counts, not lengths of the two sets above, and
+    neither can be derived from them: two takes holding identical bytes share
+    one digest, and `takes` counts the open take the card may be writing right
+    now, which has no digest and never will until it is finalised. They exist
+    so the window can say *how many* takes are still missing — the only
+    question the locked row is there to answer.
     """
     serial: str
     digests: frozenset[str]
     inventory: tuple
     complete: bool
+    takes: int
+    verified: int
 
 
 def inventory_of(takes) -> tuple:
@@ -58,6 +68,24 @@ class Event:
     take: str | None = None
     detail: str | None = None
     verdict: "CardVerdict | None" = None
+
+
+def _hid_node_for(serial: str, lister) -> Path | None:
+    """The node currently announcing this serial as its HID_UNIQ, or None.
+
+    Both sides are folded the same way find_storage folds them: the volume
+    serial comes out of the boot sector uppercased with a dash, HID_UNIQ is
+    whatever the firmware wrote.
+    """
+    key = serial.replace("-", "").upper()
+    try:
+        nodes = lister()
+    except OSError:
+        return None
+    for uniq, node in nodes.items():
+        if uniq.replace("-", "").upper() == key:
+            return node
+    return None
 
 
 def _stamp(when: datetime) -> str:
@@ -155,6 +183,10 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
     so a failed import costs time and never data.
     """
     takes = card.takes()
+    # Read straight after takes(), which is what sets it: a zero-byte entry
+    # is an open recording, not an empty file, so the card is mid-take and
+    # cannot be fully copied by definition.
+    open_takes = getattr(card, "open_takes", 0)
     yield Event("inventory", detail=str(len(takes)))
     # Card name -> digest, for every take this import could account for —
     # copied now or already held. This is not the identity lookup the
@@ -256,11 +288,18 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
     # complete compares counts of *takes*, not of digests: two takes holding
     # identical bytes share one digest, and both are held — the card is
     # still fully accounted for.
+    #
+    # An open take counts as a take that was not copied. takes() cannot copy
+    # it — it has no size and its clusters are still being written — so the
+    # card holds audio this import does not, and the lock has to stay shut.
+    total = len(takes) + open_takes
     yield Event("verdict", verdict=CardVerdict(
         serial=getattr(card, "serial", ""),
         digests=frozenset(seen.values()),
         inventory=inventory_of(takes),
-        complete=len(seen) == len(takes),
+        complete=len(seen) == total,
+        takes=total,
+        verified=len(seen),
     ))
     yield Event("done")
 
@@ -275,8 +314,21 @@ _FAILURE_MESSAGES = {
 }
 
 
+def _fresh_takes(card):
+    """The card's takes, read again rather than from anything cached.
+
+    The FAT read during the import describes the card as it was then; this
+    call exists precisely to find out whether it still is.
+    """
+    refresh = getattr(card, "refresh", None)
+    if refresh is not None:
+        refresh()
+    return card.takes()
+
+
 def erase_card(card, ledger: Ledger, verdict: CardVerdict, node,
-               eraser=erase_over_hid, hasher=sha256_file) -> Iterator[Event]:
+               eraser=erase_over_hid, hasher=sha256_file,
+               hidraw_lister=default_hidraw_lister) -> Iterator[Event]:
     """Erase one card, and only if it is still safe to.
 
     Four things must hold, and each is checked here rather than trusted: the
@@ -295,10 +347,23 @@ def erase_card(card, ledger: Ledger, verdict: CardVerdict, node,
     Re-reading the directory is cheap and sound here only: no erase has
     happened in between, so no name has been recycled.
 
-    An empty card with an empty, vacuously-complete verdict passes every
-    guard and does erase — that was considered, not missed: there is nothing
-    on such a card to lose, so refusing it would be a special case earning
-    nothing.
+    A verdict holding no digests is refused rather than treated as a card
+    with nothing to lose. `takes()` reports a filtered view, not the card's
+    contents: an open take — a recording in progress, its clusters already
+    holding audio — is dropped from it, as is anything in a subdirectory. So
+    "the import saw nothing" and "there is nothing there" are different
+    statements, and only the second would make erasing harmless. A proof of
+    zero takes out of zero is not a proof, and every guard below passes
+    vacuously on it.
+
+    The HID node is re-identified last, after the guards. It has to be: the
+    long part of this function is `erase_allowed` re-hashing every local
+    copy — 80 s for 30 GB — and hidraw minor numbers are reused, so a user
+    who lifts both transmitters out and re-docks them in the other order
+    during that wait would have the command land on the node that is now the
+    *other* card. The block side has always read the serial from the device
+    it actually opened; this is the same check on the side that gets written
+    to.
     """
     if verdict.serial != getattr(card, "serial", None):
         yield Event("refused",
@@ -310,18 +375,45 @@ def erase_card(card, ledger: Ledger, verdict: CardVerdict, node,
     if not verdict.complete:
         yield Event("refused", detail="toutes les prises n'ont pas été copiées")
         return
-    if inventory_of(card.takes()) != verdict.inventory:
+    if not verdict.digests:
+        yield Event("refused",
+                    detail="aucune prise vérifiée sur cette carte")
+        return
+    fresh = _fresh_takes(card)
+    if inventory_of(fresh) != verdict.inventory:
         yield Event("refused",
                     detail="la carte a changé depuis la récupération")
         return
+    if getattr(card, "open_takes", 0):
+        # Not covered by the inventory comparison: an open take is filtered
+        # out of both sides of it, so a card that started recording since the
+        # import compares equal while holding audio nobody has copied.
+        yield Event("refused",
+                    detail="un enregistrement est en cours sur cette carte")
+        return
     if not ledger.erase_allowed(verdict.digests, hasher=hasher):
         yield Event("refused", detail="une copie manque ou a changé")
+        return
+
+    # Last, and deliberately after the re-hashing above: minutes may have
+    # passed since the node was resolved, and a re-dock reuses hidraw minors.
+    if _hid_node_for(verdict.serial, hidraw_lister) != node:
+        yield Event("refused",
+                    detail="le nœud HID ne correspond plus à cette carte")
         return
 
     yield Event("erasing", detail=verdict.serial)
     result = eraser(node)
     if result.verdict in (SUCCESS, REENUMERATED):
         yield Event("erased", detail=verdict.serial)
+        # Assert nothing: the card comes back readable straight away, so the
+        # cheapest honest thing to do is look. A card that cannot be re-read
+        # is not a failure — a transmitter mid-reenumeration is the normal
+        # end of an erase — so the count is simply reported as unknown.
+        try:
+            yield Event("reinventoried", detail=str(len(_fresh_takes(card))))
+        except (OSError, ValueError, struct.error):
+            yield Event("reinventoried", detail=None)
     elif result.verdict == UNKNOWN:
         # Silence from the transmitter is not a failure: the command may well
         # have gone through, and conteur.erase.erase's own contract is that

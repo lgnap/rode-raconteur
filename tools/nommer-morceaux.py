@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from conteur.job import decide_name          # noqa: E402
 from conteur.naming import origin_label      # noqa: E402
+from conteur.orphans import is_placeholder   # noqa: E402
 from conteur.paths import unique_path        # noqa: E402
 from conteur.transcribe import chosen_device, load_model  # noqa: E402
 from conteur.wavread import read_samples     # noqa: E402
@@ -34,7 +35,10 @@ SLUG = re.compile(r"[a-z0-9-]+")
 
 
 def already_annotated(stem: str) -> bool:
-    return "__" in stem and SLUG.fullmatch(stem.rsplit("__", 1)[1]) is not None
+    if "__" not in stem:
+        return False
+    tail = stem.rsplit("__", 1)[1]
+    return SLUG.fullmatch(tail) is not None and not is_placeholder(tail)
 
 
 def collect(targets: list[Path]) -> list[Path]:

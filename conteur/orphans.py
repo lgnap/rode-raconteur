@@ -34,6 +34,16 @@ def parse_timestamp(name: str) -> datetime | None:
         return None
 
 
+def is_placeholder(tail: str) -> bool:
+    """True if the slug is the provisional placeholder, not a real name.
+
+    Both the recorded form and imported form use the same placeholder.
+    This is the single authority consulted by both is_orphan and the CLI
+    naming tool, so they never contradict each other.
+    """
+    return tail == UNNAMED or re.fullmatch(rf"{re.escape(UNNAMED)}-\d+", tail) is not None
+
+
 def is_orphan(name: str) -> bool:
     """True for a take still carrying the provisional slug.
 
@@ -53,7 +63,7 @@ def is_orphan(name: str) -> bool:
         tail = stem.rsplit("__", 1)[1]
     else:
         tail = stem.split("_", 2)[-1] if stem.count("_") >= 2 else ""
-    return tail == UNNAMED or re.fullmatch(rf"{re.escape(UNNAMED)}-\d+", tail) is not None
+    return is_placeholder(tail)
 
 
 def find_orphans(root: Path) -> list[tuple[Path, datetime]]:

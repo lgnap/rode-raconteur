@@ -1,11 +1,23 @@
 """Recovery of takes left without a name."""
 
+import importlib.util
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from conteur.orphans import find_orphans, is_orphan, parse_timestamp
+from conteur.orphans import find_orphans, is_orphan, is_placeholder, parse_timestamp
+
+SCRIPT = Path(__file__).resolve().parent.parent / "tools" / "nommer-morceaux.py"
+
+
+@pytest.fixture(scope="module")
+def outil():
+    """Import the CLI naming tool for agreement tests."""
+    spec = importlib.util.spec_from_file_location("nommer_morceaux", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.mark.parametrize("name, expected", [
@@ -67,3 +79,54 @@ def test_an_unnamed_import_is_recovered_too():
 
 def test_a_named_import_is_not_an_orphan():
     assert not is_orphan("2026-09-07_111030_00002_Source-Baffle__la-licorne.wav")
+
+
+def test_is_placeholder():
+    """The placeholder detection is shared by both naming functions."""
+    assert is_placeholder("sans-nom")
+    assert is_placeholder("sans-nom-2")
+    assert is_placeholder("sans-nom-13")
+    assert not is_placeholder("la-licorne")
+    assert not is_placeholder("silence")
+
+
+def test_edge_case_card_name_with_double_underscore():
+    """Card names can contain __, and we still extract the slug correctly."""
+    # A card named "Source__Baffle" would produce this:
+    assert is_orphan("2026-09-07_111030_00001_Source__Baffle__sans-nom.wav")
+    assert not is_orphan("2026-09-07_111030_00001_Source__Baffle__la-licorne.wav")
+
+
+def test_edge_case_empty_slug_after_double_underscore():
+    """An edge case: a file with __ but empty slug after it."""
+    # This would be malformed but we should handle it gracefully.
+    # Empty string is not the placeholder, so should not be orphan.
+    assert not is_orphan("2026-09-07_111030_00001_Source-Baffle__.wav")
+
+
+def test_the_two_naming_rules_agree_on_the_placeholder(outil):
+    """orphans.is_orphan and the CLI's already_annotated must not disagree:
+    a file one calls "still unnamed" and the other calls "already named"
+    would be skipped by the tool for ever.
+
+    This test directly compares the two functions on the names that matter.
+    """
+    # Placeholder names: is_orphan should return True, already_annotated should return False
+    placeholder_names = [
+        "sans-nom",
+        "sans-nom-2",
+        "00002_Source-Baffle__sans-nom",
+        "00002_Source-Baffle__sans-nom-2",
+    ]
+    for stem in placeholder_names:
+        assert is_orphan(f"2026-09-07_111030_{stem}.wav"), f"is_orphan should see {stem} as orphan"
+        assert not outil.already_annotated(stem), f"already_annotated should not skip {stem}"
+
+    # Named files: is_orphan should return False, already_annotated should return True
+    named_stems = [
+        "00002_Source-Baffle__la-licorne",
+        "00002_Source-Baffle__silence",
+    ]
+    for stem in named_stems:
+        assert not is_orphan(f"2026-09-07_111030_{stem}.wav"), f"is_orphan should not see {stem} as orphan"
+        assert outil.already_annotated(stem), f"already_annotated should recognize {stem} as named"

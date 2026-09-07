@@ -71,3 +71,26 @@ def test_a_device_file_is_not_annotated_twice(outil, tmp_path):
     path.write_bytes(b"")
     assert outil.annotate(path, model=None) is None
     assert path.exists()
+
+
+@pytest.mark.parametrize("stem", [
+    "00002_Source-Baffle__sans-nom",
+    "00002_Source-Baffle__sans-nom-2",
+])
+def test_placeholder_names_are_not_considered_already_annotated(outil, stem):
+    """Placeholder names must be processed again, not skipped.
+    This pairs with the orphan recovery test to ensure the two functions agree."""
+    assert not outil.already_annotated(stem)
+
+
+def test_edge_case_card_name_with_double_underscore(outil):
+    """Card names can contain __, and already_annotated still works."""
+    # A card named "Source__Baffle" would produce this:
+    assert not outil.already_annotated("00001_Source__Baffle__sans-nom")
+    assert outil.already_annotated("00001_Source__Baffle__la-licorne")
+
+
+def test_edge_case_empty_slug_after_double_underscore(outil):
+    """An edge case: a file with __ but empty slug after it."""
+    # Empty string does not match SLUG regex, so should not be annotated.
+    assert not outil.already_annotated("00001_Source-Baffle__")

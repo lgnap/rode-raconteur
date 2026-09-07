@@ -239,6 +239,21 @@ Device-specific tools that do things this guide does not:
 - [rodecaster-control](https://github.com/Jordan-Milner/rodecaster-control) — open alternative to RODE Central for the RODECaster Pro II
 - [Rode_WirelessGoII_UGG2wav](https://github.com/fukidzon/Rode_WirelessGoII_UGG2wav) — convert Wireless GO II `.UGG` recordings to WAV
 
+## How this was written
+
+Most of the code and prose in this repository was written by Claude (Anthropic's
+model) over a long working session, directed and reviewed throughout by a human.
+Saying so seems more useful than leaving you to guess.
+
+What is **not** generated is the evidence. Every measurement here was taken from
+real hardware on the machine described at the top: the USB and HID report
+descriptors were read from sysfs, the throughput figures came from `dd` and from
+actual file copies, the erase protocol was traced and then run on two
+transmitters, and the WAV chunk layouts were parsed from files the devices wrote.
+Where something is inferred rather than measured, the text says so.
+
+Corrections are welcome on any of it — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Copy freely, including into distribution packages

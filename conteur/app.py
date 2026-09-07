@@ -13,8 +13,9 @@ from PySide6.QtWidgets import (
 )
 
 from conteur.card import Card
+from conteur.devices import StorageDevice
 from conteur.devices import find_storage as default_find_storage
-from conteur.intake import intake
+from conteur.intake import CardVerdict, erase_card, intake
 from conteur.job import name_recording
 from conteur.job import rename_take as rename_take_file
 from conteur.ledger import Ledger
@@ -99,6 +100,9 @@ class ImportSnapshot:
         self.finished = False
         self.lines: list[str] = []
         self._pending: list = []
+        # One verdict per serial: the erase row a card is offered depends only
+        # on the last import's conclusion about it, not on the run history.
+        self.verdicts: dict[str, CardVerdict] = {}
 
     def queue_submit(self, path) -> None:
         """Record a take to hand to the naming queue — never do it here."""
@@ -154,6 +158,8 @@ class ImportSnapshot:
             elif event.kind == "failed":
                 self.failures += 1
                 self.lines.append(f"{event.take} → échec : {event.detail}")
+            elif event.kind == "verdict" and event.verdict is not None:
+                self.verdicts[event.verdict.serial] = event.verdict
             elif event.kind == "done":
                 # Marks the end of one card's intake, not of the whole run:
                 # with several cards, the run loop keeps going. `finished` is
@@ -407,6 +413,85 @@ class MainWindow(QMainWindow):
         # minutes used to vanish before anyone read it.
         self.refresh_device()
         self._set_status(self._snapshot.summary(), sticky=True)
+
+    def erasable(self) -> list[tuple[str, bool, str]]:
+        """One row per card the last import looked at: serial, allowed, reason.
+
+        A card is offered only when the import accounted for all of it — an
+        incomplete one is still listed, with the reason, so the user knows why
+        it is locked rather than wondering where it went. There is
+        deliberately no row that erases everything: a global control would
+        hide which device is being wiped, and this is the one action that
+        cannot be undone.
+        """
+        rows = []
+        for serial, verdict in sorted(self._snapshot.verdicts.items()):
+            if verdict.complete:
+                rows.append((serial, True, f"{len(verdict.digests)} prise(s) vérifiée(s)"))
+            else:
+                rows.append((serial, False, "des prises n'ont pas été copiées"))
+        return rows
+
+    def erase_serials(self, serials: list[str]) -> None:
+        """Erase several cards one after another, re-resolving between each.
+
+        An erase makes the transmitter re-enumerate: its hidraw node comes
+        back under another number, and it starts presenting its own storage
+        alongside the charging case's. A device list taken once before the
+        first erase is therefore already wrong for the second — so the
+        resolution happens here, inside the loop, once per card, rather than
+        once before it.
+        """
+        for serial in serials:
+            verdict = self._snapshot.verdicts.get(serial)
+            if verdict is None:
+                continue
+            device = next((d for d in self._find_storage() if d.serial == serial), None)
+            if device is None:
+                self._set_status(f"{serial} : appareil absent", sticky=True)
+                continue
+            self._erase_one(device, verdict)
+
+    def _erase_one(self, device: StorageDevice, verdict: CardVerdict) -> None:
+        """Open one card and run its erase, routing events to the status line.
+
+        Runs synchronously on the GUI thread, deliberately: measured at
+        1.2-1.8 s regardless of how much is stored, against minutes for an
+        import, so it does not warrant the snapshot/timer machinery a full
+        import needs. If it ever grows, it moves to the import thread — not
+        to a second one.
+
+        `erase_card` already refuses on a serial mismatch, a stale inventory,
+        a missing or tampered local copy, and a missing HID node: this method
+        only reports what it decides, never re-checks it.
+        """
+        serial = verdict.serial
+        try:
+            with device.block.open("rb") as fh:
+                card = Card(fh)
+                ledger = Ledger(card.serial)
+                for event in erase_card(card, ledger, verdict, device.hidraw):
+                    if event.kind == "erased":
+                        # The card no longer holds what the verdict describes;
+                        # offering to erase it again would be nonsense.
+                        self._snapshot.verdicts.pop(serial, None)
+                        self._set_status(f"{serial} : carte effacée", sticky=True)
+                    elif event.kind == "refused":
+                        self._set_status(f"{serial} : {event.detail}", sticky=True)
+                    elif event.kind in ("failed", "unknown"):
+                        # "unknown" is deliberately not folded into "failed":
+                        # silence from the transmitter means the state is
+                        # undetermined, not that the erase failed, and
+                        # event.detail (built by erase_card) already says so
+                        # and already carries the serial, unlike "refused"'s.
+                        self._set_status(event.detail, sticky=True)
+        except (OSError, ValueError) as error:
+            # The card vanishing between resolution and open (unplugged, or a
+            # transmitter mid-reenumeration from a previous erase) must not
+            # crash the window it was clicked from.
+            self._set_status(f"{serial} : {error}", sticky=True)
+            return
+        self.refresh_device()
 
     def _start_model_loading(self) -> None:
         if self._model_loader is not None:

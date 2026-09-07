@@ -1431,3 +1431,250 @@ def test_the_summary_tells_new_from_already_imported(qapp):
     win._snapshot.mark_finished()
     text = win._snapshot.summary()
     assert "8" in text and "rien de nouveau" in text.lower(), text
+
+
+# --- erasable() / erase_serials(): one row per card, one action per card,
+# and the device list re-resolved between erases (a completed erase makes the
+# transmitter re-enumerate). No test here ever opens a real hidraw node or
+# calls the real eraser: erase_card's own eraser and every StorageDevice come
+# from fakes, and Ledger only ever writes under tmp_path.
+
+def test_a_fully_held_card_is_offered_for_erasing(qapp, tmp_path):
+    from conteur.intake import CardVerdict, Event
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    win._snapshot.absorb(Event("verdict", verdict=CardVerdict(
+        serial="800A-92D6", digests=frozenset({"aa" * 32}),
+        inventory=(), complete=True)))
+    assert [s for s, allowed, _ in win.erasable() if allowed] == ["800A-92D6"]
+
+
+def test_a_card_with_an_uncopied_take_is_not_offered(qapp):
+    from conteur.intake import CardVerdict, Event
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    win._snapshot.absorb(Event("verdict", verdict=CardVerdict(
+        serial="800A-F63E", digests=frozenset(), inventory=(), complete=False)))
+    assert [s for s, allowed, _ in win.erasable() if allowed] == []
+    # Still listed, so the user learns why it is locked rather than wondering
+    # where the row went.
+    serial, allowed, reason = win.erasable()[0]
+    assert serial == "800A-F63E" and not allowed and reason
+
+
+def test_two_cards_are_erased_one_at_a_time_with_the_list_re_resolved(qapp):
+    """An erase makes the transmitter re-enumerate, so the device list taken
+    before the first erase is stale by the second.
+
+    Correction to the original brief: that version stubbed `_erase_one` to
+    take a bare serial and asserted `find_storage` was called at least twice
+    -- but `_erase_one` was the only thing calling it, and stubbing it is
+    exactly what removes that call. `erase_serials` now resolves the device
+    itself, once per card inside the loop, and hands it to
+    `_erase_one(device, verdict)` -- which is what this test stubs and
+    exercises instead.
+    """
+    from conteur.devices import StorageDevice
+    from conteur.intake import CardVerdict
+    from pathlib import Path
+
+    resolved = []
+
+    def find_storage():
+        resolved.append(len(resolved))
+        return [StorageDevice("800A-92D6", Path("/dev/sdc"), Path("/dev/hidraw4"), True),
+                StorageDevice("800A-F63E", Path("/dev/sdb"), Path("/dev/hidraw6"), True)]
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=find_storage)
+    for serial in ("800A-92D6", "800A-F63E"):
+        win._snapshot.verdicts[serial] = CardVerdict(
+            serial=serial, digests=frozenset(), inventory=(), complete=True)
+
+    order = []
+    win._erase_one = lambda device, verdict: order.append(verdict.serial)
+    win.erase_serials(["800A-92D6", "800A-F63E"])
+    assert order == ["800A-92D6", "800A-F63E"]
+    assert len(resolved) >= 2, "the device list must be re-resolved between erases"
+
+
+def test_erase_serials_skips_a_serial_the_snapshot_never_verdicted(qapp):
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    calls = []
+    win._erase_one = lambda device, verdict: calls.append(verdict.serial)
+    win.erase_serials(["800A-92D6"])
+    assert calls == []
+
+
+def test_erase_serials_reports_and_skips_an_absent_device(qapp):
+    from conteur.intake import CardVerdict
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    win._snapshot.verdicts["800A-92D6"] = CardVerdict(
+        serial="800A-92D6", digests=frozenset(), inventory=(), complete=True)
+    calls = []
+    win._erase_one = lambda device, verdict: calls.append(verdict.serial)
+
+    win.erase_serials(["800A-92D6"])
+
+    assert calls == []
+    assert "appareil absent" in win.status_label.text()
+
+
+# --- _erase_one(): routes erase_card's events to the status line without
+# re-implementing any of its checks. erase_card itself is faked here, the
+# same way test_erase_card.py fakes it, so these tests never touch card.py's
+# real FAT parsing, the real eraser, or a real hidraw node.
+
+def test_a_successful_erase_drops_the_verdict_and_says_so(qapp, tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from conteur.devices import StorageDevice
+    from conteur.intake import CardVerdict, Event
+
+    block = tmp_path / "sdc"
+    block.write_bytes(b"\x00")
+
+    class FakeCard:
+        serial = "800A-92D6"
+
+    monkeypatch.setattr(app_mod, "Card", lambda fh: FakeCard())
+    monkeypatch.setattr(
+        app_mod, "erase_card",
+        lambda card, ledger, verdict, node: iter([
+            Event("erasing", detail=verdict.serial),
+            Event("erased", detail=verdict.serial),
+        ]))
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    verdict = CardVerdict(serial="800A-92D6", digests=frozenset({"aa" * 32}),
+                          inventory=(), complete=True)
+    win._snapshot.verdicts[verdict.serial] = verdict
+    device = StorageDevice("800A-92D6", block, Path("/dev/hidraw4"), True)
+
+    win._erase_one(device, verdict)
+
+    assert "800A-92D6" not in win._snapshot.verdicts
+    assert "carte effacée" in win.status_label.text()
+
+
+def test_a_refused_erase_keeps_the_verdict_and_reports_the_reason(
+    qapp, tmp_path, monkeypatch,
+):
+    from pathlib import Path
+
+    from conteur.devices import StorageDevice
+    from conteur.intake import CardVerdict, Event
+
+    block = tmp_path / "sdc"
+    block.write_bytes(b"\x00")
+
+    class FakeCard:
+        serial = "800A-92D6"
+
+    monkeypatch.setattr(app_mod, "Card", lambda fh: FakeCard())
+    monkeypatch.setattr(
+        app_mod, "erase_card",
+        lambda card, ledger, verdict, node: iter([
+            Event("refused", detail="la carte a changé depuis la récupération"),
+        ]))
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    verdict = CardVerdict(serial="800A-92D6", digests=frozenset(),
+                          inventory=(), complete=True)
+    win._snapshot.verdicts[verdict.serial] = verdict
+    device = StorageDevice("800A-92D6", block, Path("/dev/hidraw4"), True)
+
+    win._erase_one(device, verdict)
+
+    assert verdict.serial in win._snapshot.verdicts
+    assert "la carte a changé depuis la récupération" in win.status_label.text()
+
+
+def test_an_unknown_outcome_is_shown_distinctly_from_a_failure(
+    qapp, tmp_path, monkeypatch,
+):
+    """Silence from the transmitter is not a failure: the command may well
+    have gone through, and the honest answer is to re-read the card."""
+    from pathlib import Path
+
+    from conteur.devices import StorageDevice
+    from conteur.intake import CardVerdict, Event
+
+    block = tmp_path / "sdc"
+    block.write_bytes(b"\x00")
+
+    class FakeCard:
+        serial = "800A-92D6"
+
+    monkeypatch.setattr(app_mod, "Card", lambda fh: FakeCard())
+    monkeypatch.setattr(
+        app_mod, "erase_card",
+        lambda card, ledger, verdict, node: iter([
+            Event("unknown",
+                 detail=f"{verdict.serial} : état indéterminé, il faut relire la carte"),
+        ]))
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    verdict = CardVerdict(serial="800A-92D6", digests=frozenset(),
+                          inventory=(), complete=True)
+    win._snapshot.verdicts[verdict.serial] = verdict
+    device = StorageDevice("800A-92D6", block, Path("/dev/hidraw4"), True)
+
+    win._erase_one(device, verdict)
+
+    assert "état indéterminé" in win.status_label.text()
+    assert "échoué" not in win.status_label.text()
+    # Undetermined, not erased: the card must be re-read, so the verdict is
+    # not dropped as it would be on a confirmed success.
+    assert verdict.serial in win._snapshot.verdicts
+
+
+def test_a_failed_erase_is_reported_and_keeps_the_verdict(qapp, tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from conteur.devices import StorageDevice
+    from conteur.intake import CardVerdict, Event
+
+    block = tmp_path / "sdc"
+    block.write_bytes(b"\x00")
+
+    class FakeCard:
+        serial = "800A-92D6"
+
+    monkeypatch.setattr(app_mod, "Card", lambda fh: FakeCard())
+    monkeypatch.setattr(
+        app_mod, "erase_card",
+        lambda card, ledger, verdict, node: iter([
+            Event("failed", detail=f"{verdict.serial} : l'effacement a échoué"),
+        ]))
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    verdict = CardVerdict(serial="800A-92D6", digests=frozenset(),
+                          inventory=(), complete=True)
+    win._snapshot.verdicts[verdict.serial] = verdict
+    device = StorageDevice("800A-92D6", block, Path("/dev/hidraw4"), True)
+
+    win._erase_one(device, verdict)
+
+    assert "l'effacement a échoué" in win.status_label.text()
+    assert verdict.serial in win._snapshot.verdicts
+
+
+def test_a_vanished_card_is_reported_not_crashed(qapp, tmp_path):
+    """The card can vanish between resolution and open -- unplugged, or a
+    transmitter mid-reenumeration from a previous erase in the same batch.
+    The window must survive the click that triggered it."""
+    from pathlib import Path
+
+    from conteur.devices import StorageDevice
+    from conteur.intake import CardVerdict
+
+    win = MainWindow(find_rx=lambda: None, queue=None, find_storage=list)
+    verdict = CardVerdict(serial="800A-92D6", digests=frozenset(),
+                          inventory=(), complete=True)
+    win._snapshot.verdicts[verdict.serial] = verdict
+    device = StorageDevice("800A-92D6", tmp_path / "gone", Path("/dev/hidraw4"), True)
+
+    win._erase_one(device, verdict)  # must not raise
+
+    assert "800A-92D6" in win.status_label.text()

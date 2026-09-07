@@ -109,18 +109,45 @@ in `iXML` alike — so it is the firmware, not a decoding artefact.
 
 ## Reading the recordings off
 
-### Through the case is four times faster
+### Throughput, and the trap in measuring it
 
-Same card, same host, measured with `dd iflag=direct` and confirmed by a real
-file copy:
+Read from the Charge Case+, measured with `dd iflag=direct` and confirmed by a
+real file copy that hashes the stream as it goes:
 
-| Path | Throughput | A full 28.9 GB card |
+| Host connection | Throughput | A full 28.9 GB card |
 |---|---|---|
-| TX connected directly | 5.2 MB/s | **1 h 30** |
-| through the Charge Case+ | **21.4 MB/s** | **23 min** |
+| USB-C, SuperSpeed link | **38.6 MB/s** | **12.5 min** |
+| through a USB 2 path | 21.8 MB/s | 23 min |
 
-The direct figure is a hard ceiling: block sizes from 64 kB to 8 MB all give the
-same 5.2 MB/s, and reading while the transmitter is recording changes nothing.
+**The cable and the port matter, and the descriptor will not tell you.** On a
+USB 2 path the case declares `bcdUSB 2.10` and negotiates 480M, so it looks
+like a USB 2.0 device. On a SuperSpeed path the very same case declares
+`bcdUSB 3.20` and negotiates 5000M, and the kernel raises `max_sectors_kb`
+from 120 to 1024. A device descriptor describes the connection that was
+negotiated, not what the hardware can do — do not conclude a ceiling from it,
+as we first did.
+
+```sh
+cat /sys/bus/usb/devices/<dev>/speed          # 480 or 5000
+cat /sys/block/sdX/queue/max_sectors_kb       # 120 or 1024
+```
+
+A transmitter connected directly gave 5.2 MB/s, but that was measured on a
+USB 2 path and has not been re-measured since; treat it as not comparable. The
+charging case is the connection RØDE designs for, and the one these figures
+describe.
+
+### Reading both cards at once is slower than one after the other
+
+The two LUNs share one link, and competing for it costs:
+
+| | Throughput |
+|---|---|
+| one card at a time | 38.6 MB/s |
+| both in parallel | 18.2 + 18.3 = 36.5 MB/s |
+
+Worse on a USB 2 path, where the same test lost 25 %. Copy one card, then the
+other.
 
 ### The case exposes two LUNs under one serial — and that breaks the obvious join
 

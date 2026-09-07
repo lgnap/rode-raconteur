@@ -83,9 +83,13 @@ confirmation prompt, and the read-only storage means nothing can be recovered
 afterwards.
 
 Both paths work — a transmitter connected directly, or docked in the charging
-case. The docked path is worth preferring for a different reason: reading the
-same card is **four times faster** through the case (21 MB/s versus 5 MB/s), so
-the copy you must do first is much shorter.
+case. Docked is the connection RØDE designs for, and the one worth using: over
+a SuperSpeed link the case reads at **38.6 MB/s**, so the copy you must do
+first takes about twelve minutes even for a completely full card.
+
+Check the link before blaming the hardware: on a USB 2 cable the same case
+reads at 21.8 MB/s and *declares itself a USB 2.0 device*. See
+[device-map.md](device-map.md).
 
 Node numbers are not stable across a replug. Re-read `HID_UNIQ` from sysfs
 immediately before writing rather than trusting a path resolved earlier, and

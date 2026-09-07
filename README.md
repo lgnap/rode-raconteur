@@ -226,9 +226,11 @@ it is implemented by [krode](https://github.com/LinuxRenaissance/krode).
 What that binary is, why it is necessary, the percentage-not-status-code finding
 and the erase-completion fix we sent upstream: **[docs/krode.md](docs/krode.md)**
 
-Copy and verify your recordings before erasing. It is irreversible, there is no
-confirmation prompt, and reading the card is **four times faster through the
-charging case** than from a transmitter connected directly.
+Copy and verify your recordings before erasing. It is irreversible and there is
+no confirmation prompt. Read the cards through the charging case over a
+SuperSpeed link — **38.6 MB/s**, about twelve minutes for a completely full
+card; the same case on a USB 2 cable manages 21.8 MB/s and will tell you it is
+a USB 2.0 device.
 
 ## Prior art
 

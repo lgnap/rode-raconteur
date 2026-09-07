@@ -1129,14 +1129,25 @@ def test_two_cards_are_cumulative_and_finished_only_after_the_second(
 ):
     """Pins the two bugs found in review: a second card's inventory must add
     to the first's `total`, and `finished` must not flip after the first
-    card's own "done" event while a second card is still queued."""
+    card's own "done" event while a second card is still queued.
+
+    Observed mid-run, not just after both cards join: a version that flips
+    `finished` inside `absorb`'s "done" branch (deviation 3's original bug)
+    would still pass an end-of-run-only assertion, since by the time the
+    thread is joined both cards are done regardless of when the flag moved.
+    Card 2 is deliberately held open on a threading.Event so the test can
+    look at the snapshot -- and at the button and timer, the user-visible
+    consequence -- while card 1 is finished but card 2 demonstrably is not.
+    """
+    import threading
     from datetime import datetime
 
-    import conteur.app as app_mod
     from conteur.card import Take
     from conteur.devices import StorageDevice
 
     when = datetime(2026, 9, 7, 11, 14, 32)
+    started2 = threading.Event()
+    hold2 = threading.Event()
 
     class FakeQueue:
         def start(self):
@@ -1167,6 +1178,11 @@ def test_two_cards_are_cumulative_and_finished_only_after_the_second(
             return [Take("00001_B.WAV", 3, 3, when), Take("00002_B.WAV", 3, 3, when)]
 
         def stream(self, take, chunk=1 << 20):
+            # Card 1 must be entirely finished before this ever runs, since
+            # cards are read one after another -- so parking here proves the
+            # run is genuinely mid-second-card, not merely "not yet started".
+            started2.set()
+            hold2.wait(5)
             yield _wav_bytes(2 if take.name.startswith("00001") else 3)
 
     made = iter([Card1, Card2])
@@ -1177,19 +1193,37 @@ def test_two_cards_are_cumulative_and_finished_only_after_the_second(
         app_mod, "Ledger", lambda serial: Ledger(serial, root=tmp_path / "ledger"),
     )
 
-    win = MainWindow(find_rx=lambda: None, queue=FakeQueue(), find_storage=list)
-    win._cards = [
+    devices = [
         StorageDevice("AAAA-0001", _FakeBlock(), None, True),
         StorageDevice("BBBB-0002", _FakeBlock(), None, True),
     ]
+    # Cards stay "plugged in" for the whole test, including after the import
+    # finishes -- refresh_device() re-scans via find_storage, and a version
+    # returning nothing would hide whether the button legitimately re-enables.
+    win = MainWindow(find_rx=lambda: None, queue=FakeQueue(),
+                     find_storage=lambda: list(devices))
+    win._cards = list(devices)
 
     win.start_import()
+
+    assert started2.wait(2), "card 2 was never reached"
+    # Card 1 is done; card 2's own first copy is deliberately still blocked.
+    # The run -- and therefore the button and the timer -- must still read
+    # as in progress.
+    assert win._snapshot.finished is False
+    win._refresh_import()
+    assert win._import_timer.isActive()
+    assert not win.import_button.isEnabled()
+
+    hold2.set()
     win._import_thread.join(5)
     win._refresh_import()
 
     assert win._snapshot.total == 3   # 1 + 2, not replaced by the second card
     assert win._snapshot.done == 3    # the run did not stop after card 1's "done"
-    assert win._snapshot.finished
+    assert win._snapshot.finished is True
+    assert not win._import_timer.isActive()
+    assert win.import_button.isEnabled()
 
 
 def test_cards_are_read_one_after_another_not_overlapped(qapp, tmp_path, monkeypatch):

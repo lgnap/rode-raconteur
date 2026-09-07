@@ -1,4 +1,4 @@
-"""Rattrapage des prises restées sans nom."""
+"""Recovery of takes left without a name."""
 
 from datetime import datetime
 from pathlib import Path
@@ -29,7 +29,7 @@ def test_parse_timestamp():
 
 
 def test_find_orphans_is_recursive_and_chronological(tmp_path):
-    # Un mois précédent ne doit pas être oublié parce qu'on a changé de mois.
+    # An earlier month must not be forgotten because the month has changed.
     for month, stamp in [("2026-08", "2026-08-31_235959"), ("2026-09", "2026-09-06_162542")]:
         d = tmp_path / month
         d.mkdir()

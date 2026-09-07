@@ -1,4 +1,4 @@
-"""Frontière Whisper. Le modèle est injecté partout sauf dans load_model()."""
+"""The Whisper boundary. The model is injected everywhere but load_model()."""
 
 from collections.abc import Iterable
 
@@ -9,19 +9,20 @@ DEVICE = "cuda"
 COMPUTE_TYPE = "int8_float16"
 LANGUAGE = "fr"
 
-# Le seuil Silero par défaut (0.5) rejette des prises courtes pourtant sonores :
-# mesuré sur du matériel réel, il rendait « silence » sur des fichiers culminant
-# à -0,1 dBFS. À 0.2 leur contenu est retrouvé.
+# The default Silero threshold (0.5) rejects short takes that are audible
+# nonetheless: measured on real material, it returned "silence" for files
+# peaking at -0.1 dBFS. At 0.2 their content is found again.
 VAD_PARAMETERS = {"threshold": 0.2}
 
 
 def speech_duration(segments: Iterable) -> float:
-    """Somme des durées des segments de parole rendus par le VAD."""
+    """Sum of the durations of the speech segments returned by the VAD."""
     return float(sum(s.end - s.start for s in segments))
 
 
 def transcribe(model, audio16k: np.ndarray) -> tuple[str, float]:
-    """Rend (texte, durée de parole). La durée vient du VAD, pas du fichier."""
+    """Return (text, speech duration). The duration comes from the VAD, not
+    from the file."""
     segments, _info = model.transcribe(
         audio16k, language=LANGUAGE, vad_filter=True,
         vad_parameters=dict(VAD_PARAMETERS),
@@ -37,22 +38,22 @@ _last_device = None
 
 
 def chosen_device() -> str | None:
-    """Périphérique réellement retenu au dernier `load_model()`, ou None."""
+    """The device actually used by the last `load_model()`, or None."""
     return _last_device
 
 
 def load_model():
-    """Charge large-v3, sur GPU si cuBLAS est chargeable, sinon sur CPU.
+    """Load large-v3, on GPU if cuBLAS can be loaded, on CPU otherwise.
 
-    Appelé une fois au démarrage. `chosen_device()` dit ce qui a été retenu.
+    Called once at startup. `chosen_device()` says what was used.
     """
     global _last_device
     from faster_whisper import WhisperModel
 
     from conteur.cuda import preload_cuda_libraries
 
-    # CTranslate2 ouvre cuBLAS par dlopen au premier encodage : construire le
-    # modèle sur GPU sans lui échouerait plus tard, en pleine transcription.
+    # CTranslate2 opens cuBLAS with dlopen at the first encode: building the
+    # model on the GPU without it would fail later, mid-transcription.
     if preload_cuda_libraries():
         _last_device = DEVICE
         return WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)

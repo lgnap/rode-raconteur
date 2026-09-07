@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Ajoute au nom de fichiers WAV ce que la transcription y reconnaît.
+"""Append to a WAV file name what transcription recognises inside it.
 
-Même reconnaissance que l'application — mêmes modèle, VAD, seuil et règles de
-slug — parce que la décision vient de `conteur.job.decide_name`, partagée, et
-non d'une copie qui finirait par diverger.
+Same recognition as the application — same model, VAD, threshold and slug
+rules — because the decision comes from the shared `conteur.job.decide_name`,
+not from a copy that would eventually drift.
 
-À la différence de l'application, le nom existant est **conservé** : le slug est
-ajouté à la suite. C'est ce qui permet de nommer des morceaux découpés aux
-marqueurs sans perdre l'indication de ce qui allait ensemble, ni casser leur
-recollage.
+Unlike the application, the existing name is **kept**: the slug is appended to
+it. That is what lets you name parts cut at markers without losing the
+indication of what belonged together, or breaking their rejoining.
 
     nommer-morceaux.py DOSSIER_OU_FICHIERS...
 
@@ -28,13 +27,13 @@ from conteur.paths import unique_path        # noqa: E402
 from conteur.transcribe import chosen_device, load_model  # noqa: E402
 from conteur.wavread import read_samples     # noqa: E402
 
-# Un slug ajouté par cet outil : uniquement minuscules, chiffres et tirets.
-# Compter les « __ » ne suffit pas — un fichier d'appareil n'en a aucun avant
-# annotation, un morceau découpé en a déjà un (sa plage horaire).
+# A slug appended by this tool: lowercase, digits and hyphens only. Counting
+# "__" is not enough — a file straight off the device has none before
+# annotation, while a part cut at markers already has one (its time range).
 SLUG = re.compile(r"[a-z0-9-]+")
 
 
-def deja_annote(stem: str) -> bool:
+def already_annotated(stem: str) -> bool:
     return "__" in stem and SLUG.fullmatch(stem.rsplit("__", 1)[1]) is not None
 
 
@@ -42,8 +41,8 @@ def collect(targets: list[Path]) -> list[Path]:
     found: list[Path] = []
     for target in targets:
         if target.is_dir():
-            # Insensible à la casse : l'appareil écrit en .WAV, l'application
-            # en .wav, et les deux cohabitent dans la même arborescence.
+            # Case-insensitive: the device writes .WAV, the application
+            # writes .wav, and both live in the same tree.
             found.extend(p for p in sorted(target.rglob("*"))
                          if p.is_file() and p.suffix.lower() == ".wav")
         elif target.is_file():
@@ -52,8 +51,8 @@ def collect(targets: list[Path]) -> list[Path]:
 
 
 def annotate(path: Path, model) -> tuple[Path, str] | None:
-    """Renomme en ajoutant le slug reconnu. Rend None si déjà annoté."""
-    if deja_annote(path.stem):
+    """Rename by appending the recognised slug. Returns None if already done."""
+    if already_annotated(path.stem):
         return None
     slug, origin = decide_name(read_samples(path), model)
     target = unique_path(path.parent, f"{path.stem}__{slug}{path.suffix}")

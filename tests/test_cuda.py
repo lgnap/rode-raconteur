@@ -1,4 +1,4 @@
-"""Préchargement des bibliothèques CUDA livrées par les paquets pip nvidia-*."""
+"""Preloading the CUDA libraries shipped by the nvidia-* pip packages."""
 
 import ctypes
 import pathlib

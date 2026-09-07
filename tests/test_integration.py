@@ -1,4 +1,4 @@
-"""Bout en bout : signal capté -> fichier nommé. Whisper et Ollama bouchonnés."""
+"""End to end: captured signal -> named file. Whisper and Ollama stubbed."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,7 +14,7 @@ WHEN = datetime(2026, 9, 6, 14, 32, 8)
 
 
 def _fail_if_called():
-    raise AssertionError("title_fn ne doit pas être appelé pour une prise courte")
+    raise AssertionError("title_fn must not be called for a short take")
 
 
 @dataclass

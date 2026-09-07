@@ -1,13 +1,13 @@
-"""Chargement des bibliothèques CUDA livrées par les paquets pip `nvidia-*`.
+"""Loading the CUDA libraries shipped by the `nvidia-*` pip packages.
 
-CTranslate2 ouvre `libcublas.so.12` par `dlopen` au premier encodage, pas au
-chargement du modèle — un GPU visible ne garantit donc rien. Sur une machine où
-CUDA vient des paquets pip plutôt que de la distribution, ces bibliothèques ne
-sont pas sur le chemin de l'éditeur de liens, et `LD_LIBRARY_PATH` est lu au
-démarrage du processus, donc trop tard pour être corrigé depuis Python.
+CTranslate2 opens `libcublas.so.12` with `dlopen` at the first encode, not when
+the model is loaded — so a visible GPU guarantees nothing. On a machine where
+CUDA comes from pip packages rather than from the distribution, those libraries
+are not on the linker path, and `LD_LIBRARY_PATH` is read when the process
+starts, hence too late to fix from Python.
 
-La seule voie qui fonctionne en cours d'exécution est de les précharger en
-RTLD_GLOBAL : le `dlopen` ultérieur les trouve déjà en mémoire.
+The only approach that works at run time is to preload them with RTLD_GLOBAL:
+the later `dlopen` then finds them already in memory.
 """
 
 import ctypes
@@ -17,7 +17,7 @@ CUBLAS = "libcublas.so.12"
 
 
 def nvidia_library_dirs() -> list[pathlib.Path]:
-    """Répertoires de bibliothèques des paquets pip `nvidia-*`, s'ils existent."""
+    """Library directories of the `nvidia-*` pip packages, if they exist."""
     try:
         import nvidia
     except ImportError:
@@ -30,9 +30,9 @@ def nvidia_library_dirs() -> list[pathlib.Path]:
 
 
 def preload_cuda_libraries() -> bool:
-    """Précharge les bibliothèques CUDA. Rend True si cuBLAS est disponible.
+    """Preload the CUDA libraries. Returns True if cuBLAS is available.
 
-    Ne lève jamais : une machine sans GPU est un cas normal, pas une erreur.
+    Never raises: a machine without a GPU is a normal case, not an error.
     """
     available = False
     for directory in nvidia_library_dirs():
@@ -44,7 +44,7 @@ def preload_cuda_libraries() -> bool:
             if so.name == CUBLAS:
                 available = True
     if not available:
-        # cuBLAS peut aussi venir de la distribution.
+        # cuBLAS may also come from the distribution.
         try:
             ctypes.CDLL(CUBLAS, mode=ctypes.RTLD_GLOBAL)
             available = True

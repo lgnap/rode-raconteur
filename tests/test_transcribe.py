@@ -51,7 +51,7 @@ def test_transcribe_of_silence_yields_empty_text():
     assert speech == 0.0
 
 
-# --- choix du périphérique ---
+# --- device selection ---
 
 
 class _FakeWhisperModel:
@@ -83,8 +83,8 @@ def test_the_model_goes_to_the_gpu_when_cublas_is_loadable(monkeypatch):
 
 
 def test_the_model_falls_back_to_cpu_without_cublas(monkeypatch):
-    """Sans cuBLAS, construire sur GPU échouerait au premier encodage, en
-    pleine transcription — donc bien après le chargement."""
+    """Without cuBLAS, building on the GPU would fail at the first encode, in
+    mid-transcription — so long after loading."""
     import conteur.cuda as cuda_mod
     import conteur.transcribe as t
 
@@ -96,8 +96,8 @@ def test_the_model_falls_back_to_cpu_without_cublas(monkeypatch):
 
 
 def test_the_vad_threshold_is_loosened():
-    """Le seuil Silero par défaut (0.5) rejetait des prises courtes pourtant
-    sonores, nommées « silence » à tort."""
+    """The default Silero threshold (0.5) rejected short takes that were
+    audible nonetheless, wrongly named "silence"."""
     from conteur.transcribe import VAD_PARAMETERS
 
     assert VAD_PARAMETERS["threshold"] < 0.5

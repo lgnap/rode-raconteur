@@ -1,9 +1,9 @@
-"""Prises restées sans nom : rattrapage au démarrage.
+"""Takes left without a name: recovery at startup.
 
-Quand le nommage échoue — modèle indisponible, application tuée, plantage — le
-WAV reste sur disque sous son nom provisoire. Sans rattrapage il y resterait pour
-toujours, ce qui est d'autant plus gênant que ce sont les prises de terrain,
-celles qu'on vient justement remettre en ordre devant le poste.
+When naming fails — model unavailable, application killed, crash — the WAV
+stays on disk under its provisional name. Without recovery it would stay there
+forever, which is all the more annoying because these are the field takes, the
+ones you have just come back to the desk to sort out.
 """
 
 import re
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from conteur.naming import UNNAMED
 
-# `<horodatage>_sans-nom.wav`, avec le suffixe de collision éventuel.
+# `<timestamp>_sans-nom.wav`, with its collision suffix if any.
 STAMP = re.compile(
     r"^(?P<y>\d{4})-(?P<mo>\d{2})-(?P<d>\d{2})_"
     r"(?P<h>\d{2})(?P<mi>\d{2})(?P<s>\d{2})_"
@@ -20,7 +20,7 @@ STAMP = re.compile(
 
 
 def parse_timestamp(name: str) -> datetime | None:
-    """Horodatage porté par le nom de fichier, ou None s'il n'en a pas."""
+    """The timestamp carried by a file name, or None if it has none."""
     match = STAMP.match(name)
     if match is None:
         return None
@@ -35,7 +35,7 @@ def parse_timestamp(name: str) -> datetime | None:
 
 
 def is_orphan(name: str) -> bool:
-    """Vrai pour `<horodatage>_sans-nom.wav` et ses variantes de collision."""
+    """True for `<timestamp>_sans-nom.wav` and its collision variants."""
     if not name.endswith(".wav") or parse_timestamp(name) is None:
         return False
     stem = name[: -len(".wav")]
@@ -44,10 +44,10 @@ def is_orphan(name: str) -> bool:
 
 
 def find_orphans(root: Path) -> list[tuple[Path, datetime]]:
-    """Prises sans nom sous `root`, chronologiquement, avec leur horodatage.
+    """Unnamed takes under `root`, in order, with their timestamp.
 
-    Le balayage est récursif : une prise d'un mois précédent ne doit pas être
-    oubliée parce qu'on a changé de mois entre-temps.
+    The scan is recursive: a take from an earlier month must not be forgotten
+    because the month has changed in the meantime.
     """
     found: list[tuple[Path, datetime]] = []
     if not root.is_dir():

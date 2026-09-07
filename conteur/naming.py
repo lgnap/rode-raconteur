@@ -1,4 +1,4 @@
-"""Décision du nom de fichier. N'importe ni Qt, ni PyAudio, ni Whisper."""
+"""Deciding a file name. Imports neither Qt, nor PyAudio, nor Whisper."""
 
 import re
 import unicodedata
@@ -6,14 +6,14 @@ from collections.abc import Callable
 
 
 def slugify(text: str, max_len: int = 60) -> str:
-    """Rend un slug ASCII minuscule, coupé sur une frontière de mot."""
+    """Return a lowercase ASCII slug, cut on a word boundary."""
     decomposed = unicodedata.normalize("NFKD", text)
     ascii_only = "".join(c for c in decomposed if not unicodedata.combining(c))
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_only.lower()).strip("-")
     if len(slug) <= max_len:
         return slug
     if slug[max_len] == "-":
-        # La coupe tombe déjà sur une frontière de mot : ne rien retirer.
+        # The cut already falls on a word boundary: drop nothing.
         return slug[:max_len].strip("-")
     cut = slug[:max_len]
     if "-" in cut:
@@ -21,14 +21,17 @@ def slugify(text: str, max_len: int = 60) -> str:
     return cut.strip("-")
 
 
+# User-visible words: they end up in the file names on disk, and the
+# application is used in French. Translating them would rename every future
+# take away from the ones already on disk.
 SILENCE = "silence"
 NO_SPEECH = "sans-parole"
 UNNAMED = "sans-nom"
 
-# Origine du nom d'une prise. Les jetons sont internes et stables : ils
-# circulent entre `job.py`, `titler.py`, la file et l'interface, et les tests
-# s'appuient dessus. Rien ne les affiche tels quels — l'interface passe par
-# `origin_label`, seule traduction, définie ici pour n'exister qu'une fois.
+# Where a take's name came from. These tokens are internal and stable: they
+# travel between `job.py`, `titler.py`, the queue and the UI, and the tests
+# rely on them. Nothing displays them as-is — the UI goes through
+# `origin_label`, the single translation, defined here so it exists only once.
 ORIGIN_TRANSCRIPT = "transcript"
 ORIGIN_TITLE = "title"
 ORIGIN_KEYWORDS = "keywords"
@@ -51,7 +54,7 @@ ORIGIN_LABELS = {
 
 
 def origin_label(origin: str) -> str:
-    """Libellé français d'une origine, pour l'affichage seul."""
+    """French label for an origin, for display only."""
     return ORIGIN_LABELS.get(origin, origin)
 
 
@@ -61,10 +64,10 @@ def choose_name(
     make_title: Callable[[str], str],
     threshold_s: float = 12.0,
 ) -> str:
-    """Décide de la stratégie et rend le slug final.
+    """Pick the strategy and return the final slug.
 
-    `make_title` n'est appelé qu'au-delà du seuil. L'injecter garde ce module
-    testable sans réseau ni modèle.
+    `make_title` is only called past the threshold. Injecting it keeps this
+    module testable without a network or a model.
     """
     text = text.strip()
     if not text:

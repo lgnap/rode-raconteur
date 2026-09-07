@@ -1,10 +1,10 @@
-"""Lecture WAV tolérante aux formats que produit le matériel.
+"""WAV reading that tolerates the formats the hardware produces.
 
-Le module `wave` de la bibliothèque standard refuse le format 3 (flottant IEEE),
-qui est précisément celui des enregistrements embarqués RØDE : 48 kHz, 32 bits
-flottant. Sans cela l'application ne sait nommer que ses propres fichiers.
+The standard library's `wave` module refuses format 3 (IEEE float), which is
+exactly what the RØDE onboard recordings use: 48 kHz, 32-bit float. Without
+this the application could only name its own files.
 
-Tout est ramené à l'échelle int16, celle qu'attend le reste du code.
+Everything is brought back to the int16 scale the rest of the code expects.
 """
 
 import struct
@@ -22,7 +22,7 @@ WAVE_EXTENSIBLE = 0xFFFE
 def _chunks(f):
     header = f.read(12)
     if len(header) < 12 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
-        raise ValueError("pas un fichier WAVE")
+        raise ValueError("not a WAVE file")
     while True:
         head = f.read(8)
         if len(head) < 8:
@@ -30,17 +30,17 @@ def _chunks(f):
         cid, size = struct.unpack("<4sI", head)
         pos = f.tell()
         yield cid, size, pos
-        # Absolu, et non relatif : l'appelant a pu déplacer la position pour
-        # lire le contenu du chunk avant de reprendre l'itération.
+        # Absolute, not relative: the caller may have moved the position to
+        # read the chunk's content before resuming iteration.
         f.seek(pos + size + (size & 1))
 
 
 def read_samples(path: Path, max_frames: int | None = None) -> np.ndarray:
-    """Rend le premier canal, en int16, quel que soit le format d'origine.
+    """Return the first channel as int16, whatever the source format.
 
-    `max_frames` borne la lecture : nommer un fichier ne demande d'en écouter
-    que le début, et lire les 691 Mo d'une prise d'une heure pour n'en
-    transcrire que cinq minutes coûte du processeur pour rien.
+    `max_frames` bounds the read: naming a file only requires listening to its
+    beginning, and reading the 691 MB of an hour-long take to transcribe five
+    minutes of it burns CPU for nothing.
     """
     fmt = data = None
     with Path(path).open("rb") as f:
@@ -58,12 +58,12 @@ def read_samples(path: Path, max_frames: int | None = None) -> np.ndarray:
             if fmt is not None and data is not None:
                 break
     if fmt is None or data is None:
-        raise ValueError(f"{Path(path).name} : chunk fmt ou data manquant")
+        raise ValueError(f"{Path(path).name}: missing fmt or data chunk")
 
     tag, channels = struct.unpack("<HH", fmt[:4])
     bits = struct.unpack("<H", fmt[14:16])[0]
     if tag == WAVE_EXTENSIBLE and len(fmt) >= 26:
-        # Le vrai format est le début du GUID de SubFormat.
+        # The real format is the start of the SubFormat GUID.
         tag = struct.unpack("<H", fmt[24:26])[0]
 
     samples = _decode(data, tag, bits)
@@ -84,11 +84,11 @@ def _decode(data: bytes, tag: int, bits: int) -> np.ndarray:
     if tag == WAVE_PCM and bits == 16:
         return np.frombuffer(data, dtype="<i2")
     if tag == WAVE_PCM and bits == 8:
-        # Le PCM 8 bits est non signé, centré sur 128.
+        # 8-bit PCM is unsigned, centred on 128.
         return ((np.frombuffer(data, dtype=np.uint8).astype(np.int16) - 128) << 8)
     if tag == WAVE_PCM and bits == 24:
         raw = np.frombuffer(data[: len(data) // 3 * 3], dtype=np.uint8).reshape(-1, 3)
         return (raw[:, 1].astype(np.int16) | (raw[:, 2].astype(np.int8).astype(np.int16) << 8))
     if tag == WAVE_PCM and bits == 32:
         return (np.frombuffer(data, dtype="<i4") >> 16).astype(np.int16)
-    raise ValueError(f"format WAV non pris en charge : tag={tag} bits={bits}")
+    raise ValueError(f"unsupported WAV format: tag={tag} bits={bits}")

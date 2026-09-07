@@ -19,9 +19,9 @@ def test_jobs_run_one_at_a_time():
         with lock:
             active += 1
             concurrent.append(active)
-        # Fenêtre pendant laquelle un second travail concurrent serait visible.
-        # Sans elle, la région comptée n'a aucune durée et le test ne peut pas
-        # distinguer la sérialisation de son absence.
+        # Window during which a second concurrent job would be visible.
+        # Without it the counted region has no duration and the test cannot
+        # tell serialisation from its absence.
         time.sleep(0.05)
         with lock:
             active -= 1
@@ -67,7 +67,7 @@ def test_a_failing_job_does_not_kill_the_queue():
     assert done.wait(5.0)
     q.stop()
     q.join(5.0)
-    assert results[0][1] is None            # échec signalé par None
+    assert results[0][1] is None            # failure signalled by None
     assert isinstance(results[0][2], RuntimeError)   # ...et sa cause transmise
     assert str(results[0][2]) == "boom"
     assert results[1][1].slug == "ok"
@@ -75,8 +75,8 @@ def test_a_failing_job_does_not_kill_the_queue():
 
 
 def test_the_cause_of_a_failure_reaches_the_callback():
-    """Sans la cause, l'interface ne peut afficher que "échec" — et il faut
-    rejouer la chaîne à la main pour savoir pourquoi."""
+    """Without the cause, the UI can only display "failed" — and the whole
+    chain has to be replayed by hand to find out why."""
     seen = []
     done = threading.Event()
 

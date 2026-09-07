@@ -1,4 +1,4 @@
-"""Fenêtre unique. Toute la logique vit ailleurs ; ce module ne fait que l'UI."""
+"""Single window. All the logic lives elsewhere; this module is only the UI."""
 
 import signal as stdlib_signal
 import sys
@@ -38,12 +38,12 @@ PENDING = "transcription…"
 
 
 def install_interrupt_handler(app, interval_ms: int = 200):
-    """Fait de Ctrl+C un arrêt propre, comme la fermeture de la fenêtre.
+    """Make Ctrl+C a clean shutdown, like closing the window.
 
-    Qt exécute sa boucle en C++ ; un gestionnaire de signal Python ne tourne
-    qu'entre deux bytecodes du fil principal, et n'est donc jamais atteint tant
-    que la boucle est en cours. Le minuteur inerte rend périodiquement la main à
-    l'interpréteur, ce qui laisse le gestionnaire s'exécuter.
+    Qt runs its loop in C++; a Python signal handler only runs between two
+    bytecodes of the main thread, and is therefore never reached while the loop
+    is running. The idle timer periodically hands control back to the
+    interpreter, which lets the handler run.
     """
     stdlib_signal.signal(stdlib_signal.SIGINT, lambda *_: app.quit())
     timer = QTimer()
@@ -53,7 +53,7 @@ def install_interrupt_handler(app, interval_ms: int = 200):
 
 
 def describe_error(error: BaseException) -> str:
-    """Rend une cause lisible, en traduisant les échecs connus les plus opaques."""
+    """Return a readable cause, translating the most opaque known failures."""
     text = str(error).strip() or error.__class__.__name__
     if "cublas" in text.lower() or "cudnn" in text.lower():
         return (
@@ -71,9 +71,9 @@ class MainWindow(QMainWindow):
                  orphan_root=None):
         super().__init__()
         self._pa = pa
-        # PortAudio fige la liste des périphériques à Pa_Initialize() et
-        # PyAudio n'offre aucun rebalayage : sans fabrique pour recréer le
-        # contexte, le sondage relirait indéfiniment l'instantané du démarrage.
+        # PortAudio freezes the device list at Pa_Initialize() and PyAudio
+        # offers no rescan: without a factory to rebuild the context, polling
+        # would forever re-read the snapshot taken at startup.
         self._pa_factory = pa_factory
         self._orphan_root = orphan_root
         self._find_rx = find_rx or self._find_rx_via_pa
@@ -81,16 +81,16 @@ class MainWindow(QMainWindow):
         self._stop = threading.Event()
         self._rows: list[QListWidgetItem] = []
         self._takes_meta: list[tuple[Path, datetime]] = []
-        # Lignes renommées à la main : un résultat automatique tardif (souvent
-        # un "échec" dû à la course entre le renommage manuel et la file, qui
-        # tient encore le chemin provisoire d'origine) ne doit plus les toucher.
+        # Rows renamed by hand: a late automatic result (often a "failed" due
+        # to the race between the manual rename and the queue, which still
+        # holds the original provisional path) must no longer touch them.
         self._manually_renamed_rows: set[int] = set()
-        # Prises captées alors que le récepteur avait disparu : le fragment est
-        # conservé, mais la ligne doit dire qu'il est tronqué.
+        # Takes captured while the receiver had vanished: the fragment is
+        # kept, but the row must say that it is truncated.
         self._incomplete_rows: set[int] = set()
         self._rx_lost = False
-        # Un message d'erreur ne doit pas être effacé par le prochain sondage
-        # du périphérique, deux secondes plus tard.
+        # An error message must not be wiped by the next device poll, two
+        # seconds later.
         self._sticky_status = False
         self._shutdown_done = False
 
@@ -132,9 +132,9 @@ class MainWindow(QMainWindow):
         self._poll.timeout.connect(self.refresh_device)
         self._poll.start(POLL_MS)
         self.refresh_device()
-        # Le modèle est chargé une fois au démarrage et reste résident. Le
-        # charger hors du fil d'interface évite de figer la fenêtre au premier
-        # arrêt de capture, au pire moment.
+        # The model is loaded once at startup and stays resident. Loading it
+        # off the UI thread avoids freezing the window at the first stop of a
+        # capture, at the worst possible moment.
         if self._pa is not None:
             self._start_model_loading()
 
@@ -144,9 +144,9 @@ class MainWindow(QMainWindow):
         return default_find_rx(self._pa)
 
     def _rescan_devices(self):
-        """Rend un contexte PortAudio neuf, seule façon de voir un branchement.
+        """Return a fresh PortAudio context, the only way to see a new plug.
 
-        Jamais appelé pendant une capture : le contexte porte le flux ouvert.
+        Never called during a capture: the context owns the open stream.
         """
         if self._pa_factory is None:
             return None
@@ -158,7 +158,7 @@ class MainWindow(QMainWindow):
                 pass
         try:
             self._pa = self._pa_factory()
-        except Exception as error:      # noqa: BLE001 - la fenêtre doit survivre
+        except Exception as error:      # noqa: BLE001 - the window must survive
             self._set_status(f"{AUDIO_UNAVAILABLE} : {error}", sticky=True)
             return None
         return self._find_rx()
@@ -172,11 +172,11 @@ class MainWindow(QMainWindow):
         return name_recording(path, at, self._await_model())
 
     def recover_orphans(self, root=None) -> int:
-        """Remet en file les prises restées sans nom d'une session précédente.
+        """Re-queue takes left unnamed by an earlier session.
 
-        Sans ce rattrapage, un nommage interrompu — modèle indisponible,
-        application tuée — laisserait le fichier `sans-nom` pour toujours.
-        Rend le nombre de prises reprises.
+        Without this recovery, an interrupted naming — model unavailable,
+        application killed — would leave the file `sans-nom` forever.
+        Returns the number of takes picked up.
         """
         root = Path(root if root is not None else self._orphan_root or "")
         taken = 0
@@ -204,14 +204,14 @@ class MainWindow(QMainWindow):
         def load():
             try:
                 self._model = load_model()
-            except BaseException as error:      # noqa: BLE001
+            except BaseException as error:      # noqa: BLE001 - never a silent dead thread
                 self._model_error = error
 
         self._model_loader = threading.Thread(target=load, daemon=True)
         self._model_loader.start()
 
     def _await_model(self):
-        """Attend le chargement lancé au démarrage. Ne le déclenche pas."""
+        """Wait for the load started at startup. Does not trigger it."""
         self._start_model_loading()
         self._model_loader.join()
         return self._model
@@ -219,16 +219,17 @@ class MainWindow(QMainWindow):
     def refresh_device(self) -> None:
         device = self._find_rx()
         if self._capture is not None:
-            # Capture en cours : le bouton porte « Arrêter ». Le désactiver
-            # rendrait la prise inarrêtable et l'audio déjà capté inatteignable.
+            # Capture in progress: the button reads "Arrêter". Disabling it
+            # would make the take unstoppable and the audio already captured
+            # unreachable.
             self.record_button.setEnabled(True)
             if device is None:
                 self._rx_lost = True
                 self._stop.set()
                 self._set_status(RX_LOST)
             if self._rx_lost and not self._capture.is_alive():
-                # Le fil de capture a rendu la main : le fragment est écrit
-                # sans attendre un geste de l'utilisateur.
+                # The capture thread has returned: the fragment is written
+                # without waiting for the user to act.
                 self._finish_capture()
             return
         if device is None:
@@ -237,11 +238,11 @@ class MainWindow(QMainWindow):
         self._set_status((device.name if device else NO_DEVICE) + self._model_suffix())
 
     def _model_suffix(self) -> str:
-        """Dit où en est le modèle, sans masquer l'état du périphérique.
+        """Say where the model stands, without hiding the device state.
 
-        Calculé ici plutôt qu'émis depuis le fil de chargement : un signal
-        traversant la frontière de fil vers une fenêtre déjà détruite plante
-        le processus.
+        Computed here rather than emitted from the loading thread: a signal
+        crossing the thread boundary into an already-destroyed window crashes
+        the process.
         """
         if self._model_error is not None:
             return f" — {MODEL_FAILED}"
@@ -250,14 +251,14 @@ class MainWindow(QMainWindow):
         return ""
 
     def _set_status(self, text: str, sticky: bool = False) -> None:
-        """Affiche un état. Un message collant survit aux sondages suivants."""
+        """Display a state. A sticky message survives the following polls."""
         if self._sticky_status and not sticky:
             return
         self.status_label.setText(text)
         self._sticky_status = sticky
 
     def _clear_status(self) -> None:
-        """Un geste de l'utilisateur lève la rémanence du dernier message."""
+        """A user action clears the stickiness of the last message."""
         self._sticky_status = False
 
     def add_take(self, filename: str, incomplete: bool = False) -> int:
@@ -277,7 +278,7 @@ class MainWindow(QMainWindow):
         return text
 
     def update_take(self, row: int, filename: str, origin: str) -> None:
-        # L'origine circule en jeton interne ; seule sa traduction s'affiche.
+        # The origin travels as an internal token; only its label is shown.
         self._rows[row].setText(self._row_text(row, filename, origin_label(origin)))
 
     def take_text(self, row: int) -> str:
@@ -285,9 +286,9 @@ class MainWindow(QMainWindow):
 
     def _apply_name(self, row: int, filename: str, origin: str) -> None:
         if row in self._manually_renamed_rows:
-            # Le renommage manuel a gagné ; un résultat automatique tardif
-            # (typiquement un "échec" dû à la course sur le chemin provisoire)
-            # ne doit pas l'effacer.
+            # The manual rename won; a late automatic result (typically a
+            # "failed" caused by the race on the provisional path) must not
+            # wipe it.
             return
         old_path, when = self._takes_meta[row]
         self._takes_meta[row] = (old_path.parent / filename, when)
@@ -297,12 +298,12 @@ class MainWindow(QMainWindow):
         self.level_bar.setValue(int(rms_dbfs(samples)))
 
     def _refresh_level(self) -> None:
-        # Rien à afficher avant l'arrivée du premier bloc.
+        # Nothing to display before the first block arrives.
         if self._last_block is not None:
             self.set_level(self._last_block)
 
     def report_naming_error(self, filename: str, reason: str) -> None:
-        """Affiche pourquoi le nommage a échoué, pas seulement qu'il a échoué."""
+        """Say why naming failed, not merely that it failed."""
         self._set_status(f"Nommage impossible pour {filename} : {reason}", sticky=True)
 
     def report_write_error(self, path, error) -> None:
@@ -311,9 +312,9 @@ class MainWindow(QMainWindow):
     def rename_take(self, row: int, new_text: str) -> None:
         path, when = self._takes_meta[row]
         if not path.exists():
-            # Course connue : la file a déjà renommé le fichier, mais le
-            # résultat n'a pas encore atteint l'interface, qui tient donc un
-            # chemin périmé. Le dire plutôt que de lever dans le fil graphique.
+            # Known race: the queue has already renamed the file, but the
+            # result has not reached the UI yet, which therefore holds a stale
+            # path. Say so rather than raise on the GUI thread.
             self._set_status(f"{MISSING_FILE} : {path}", sticky=True)
             return
         try:
@@ -354,20 +355,20 @@ class MainWindow(QMainWindow):
             self._last_block = block
 
         def run():
-            # Tout ce que lève la capture (typiquement `pa.open` sur un
-            # récepteur parti entre la détection et l'ouverture) reste dans le
-            # fil : sans cela, `_samples` resterait None et l'écriture du WAV
-            # planterait la fenêtre.
+            # Everything the capture raises (typically `pa.open` on a
+            # receiver gone between detection and opening) stays inside the
+            # thread: without this, `_samples` would stay None and writing the
+            # WAV would crash the window.
             try:
                 self._samples = record(self._pa, device, self._stop, on_block=on_block)
-            except BaseException as error:      # noqa: BLE001 - jamais de fil mort muet
+            except BaseException as error:      # noqa: BLE001 - never a silent dead thread
                 self._capture_error = error
 
         self._capture = threading.Thread(target=run, daemon=True)
         self._capture.start()
         self._level_timer.start()
         self.record_button.setText("Arrêter")
-        # La prise qui démarre chasse le message de la prise précédente.
+        # The take that starts clears the message from the previous one.
         self._set_status(device.name)
 
     def _finish_capture(self) -> None:
@@ -381,16 +382,16 @@ class MainWindow(QMainWindow):
         samples, error = self._samples, self._capture_error
         incomplete, self._rx_lost = self._rx_lost, False
         if samples is None:
-            # La capture a échoué avant d'avoir rendu quoi que ce soit : rien
-            # à écrire, mais l'utilisateur doit l'apprendre.
+            # The capture failed before returning anything: nothing to write,
+            # but the user must be told.
             detail = f" : {error}" if error is not None else ""
             self._set_status(f"{CAPTURE_FAILED}{detail}", sticky=True)
             return
 
         when = datetime.now()
         target_dir = destination_dir(when)
-        # Comme tous les autres chemins écrits : deux prises arrêtées dans la
-        # même seconde ne doivent pas s'écraser l'une l'autre.
+        # Like every other path written: two takes stopped within the same
+        # second must not overwrite each other.
         provisional = unique_path(target_dir, build_name(when, UNNAMED))
         try:
             write_wav(samples, provisional)
@@ -402,8 +403,8 @@ class MainWindow(QMainWindow):
 
         model = self._await_model()
         if model is None:
-            # Le fichier est écrit et la ligne est là : rien n'est perdu, mais
-            # il n'y a personne pour le nommer.
+            # The file is written and the row is there: nothing is lost, but
+            # there is nobody to name it.
             self._set_status(f"{MODEL_FAILED} : {self._model_error}", sticky=True)
             return
 
@@ -414,8 +415,8 @@ class MainWindow(QMainWindow):
             if result is None:
                 self.take_named.emit(row, provisional.name, ORIGIN_FAILED)
                 if error is not None:
-                    # Sans ceci l'utilisateur voit "échec" sans jamais pouvoir
-                    # en connaître la cause : il faut rejouer la chaîne à la main.
+                    # Without this the user sees "failed" and can never learn
+                    # why: the whole chain has to be replayed by hand.
                     self.naming_failed.emit(provisional.name, describe_error(error))
             else:
                 self.take_named.emit(row, result.path.name, result.origin)
@@ -424,10 +425,10 @@ class MainWindow(QMainWindow):
         self._queue.submit(provisional, when, on_done)
 
     def shutdown(self, timeout_s: float = SHUTDOWN_TIMEOUT_S) -> None:
-        """Arrêt propre : rien en attente n'est jeté sans lui laisser sa chance.
+        """Clean shutdown: nothing pending is thrown away without its chance.
 
-        Une capture en cours est écrite, les travaux déjà en file disposent du
-        délai imparti pour aboutir, puis le contexte PortAudio est rendu.
+        A capture in progress is written, jobs already queued get the allotted
+        time to finish, then the PortAudio context is released.
         """
         if self._shutdown_done:
             return
@@ -463,7 +464,7 @@ def main() -> int:
     )
     window.resize(560, 420)
     window.show()
-    interrupt_timer = install_interrupt_handler(app)  # noqa: F841 - garde la référence
+    interrupt_timer = install_interrupt_handler(app)  # noqa: F841 - keeps the reference
     window.recover_orphans()
     try:
         return app.exec()

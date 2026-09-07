@@ -23,7 +23,7 @@ def test_music_dir_falls_back_to_home_music(monkeypatch, tmp_path):
 
 
 def test_music_dir_falls_back_when_xdg_user_dir_is_missing(monkeypatch, tmp_path):
-    # xdg-utils absent de la machine : subprocess.run lève FileNotFoundError.
+    # xdg-utils missing from the machine: subprocess.run raises FileNotFoundError.
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
 
     def raising_runner(*_args, **_kwargs):

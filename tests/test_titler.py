@@ -39,8 +39,8 @@ def test_keywords_on_empty_text_is_empty():
 
 
 def test_frequent_stopwords_are_excluded():
-    # "avec" et "dans" sont plus fréquents que les vrais mots-clés : seul le
-    # filtre de mots-vides peut les écarter, la longueur ne suffit pas.
+    # "avec" and "dans" are more frequent than the real keywords: only the
+    # stopword filter can drop them, length is not enough.
     text = "avec avec avec avec dans dans dans dans chateau chateau foret"
     out = keywords(text, n=2)
     assert "avec" not in out
@@ -108,8 +108,8 @@ def test_make_title_tracked_reports_its_source():
 
 
 def test_unclosed_think_block_is_rejected():
-    # Bloc de raisonnement tronqué : court, sans saut de ligne, il franchirait
-    # les trois autres gardes.
+    # Truncated reasoning block: short, no newline, it would pass the three
+    # other guards.
     assert title_from_ollama("texte", post=_post("<think>raisonnement tronque")) is None
 
 
@@ -122,12 +122,12 @@ def test_unclosed_think_block_falls_back_to_keywords():
     assert "loup" in title
 
 
-# --- préchauffage du titrage ---
+# --- warm-up of the titling model ---
 
 
 def test_timeout_covers_a_cold_ollama():
-    """Mesuré : 30 s au premier appel, 0,7 s ensuite. Un délai de 20 s faisait
-    basculer le premier titre de chaque session sur le repli mots-clés."""
+    """Measured: 30 s on the first call, 0.7 s afterwards. A 20 s timeout sent
+    the first title of every session to the keyword fallback."""
     from conteur.titler import TIMEOUT_S
 
     assert TIMEOUT_S >= 45.0
@@ -136,9 +136,9 @@ def test_timeout_covers_a_cold_ollama():
 
 
 def test_the_title_request_releases_the_gpu_immediately():
-    """Mesuré : Whisper occupe 2033 Mio et qwen3:8b 5470 sur 8192. Les deux
-    tiennent au repos, mais pas pendant une transcription de plusieurs minutes.
-    Sans keep_alive=0, la suite échouait en « CUDA out of memory »."""
+    """Measured: Whisper takes 2033 MiB and qwen3:8b 5470 out of 8192. Both fit
+    at rest, but not during a multi-minute transcription.
+    Without keep_alive=0, what followed failed with "CUDA out of memory"."""
     post = _post("Le loup")
     title_from_ollama("texte", post=post)
     assert post.seen.json["keep_alive"] == 0

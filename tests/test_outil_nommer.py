@@ -17,8 +17,8 @@ def outil():
 
 
 def test_finds_wav_whatever_the_case(outil, tmp_path):
-    """L'appareil écrit en .WAV, l'application en .wav, et les deux cohabitent.
-    Ne chercher que les minuscules laissait passer tous les rushes."""
+    """The device writes .WAV, the application writes .wav, and both coexist.
+    Looking only for lowercase let every field take slip through."""
     (tmp_path / "appareil.WAV").write_bytes(b"")
     (tmp_path / "application.wav").write_bytes(b"")
     (tmp_path / "notes.txt").write_bytes(b"")
@@ -46,17 +46,17 @@ def test_an_explicit_file_is_taken_as_is(outil, tmp_path):
 
 
 @pytest.mark.parametrize("stem, annote", [
-    # Fichier d'appareil : aucun « __ » avant annotation, un seul après.
+    # Straight off the device: no "__" before annotation, one after.
     ("00003_Ambiance-Personne", False),
     ("00003_Ambiance-Personne__la-licorne", True),
-    # Morceau découpé : un « __ » dès le départ, sa plage horaire.
+    # Part cut at markers: one "__" from the start, its time range.
     ("01_sur_03__00-00.000_a_01-20.799", False),
     ("01_sur_03__00-00.000_a_01-20.799__la-licorne", True),
 ])
 def test_detects_what_is_already_annotated(outil, stem, annote):
-    """Compter les « __ » ne suffit pas : les deux sources n'en ont pas le même
-    nombre au départ. Sans cela, un second passage empilerait un slug de plus."""
-    assert outil.deja_annote(stem) is annote
+    """Counting "__" is not enough: the two sources do not start with the same
+    number of them. Without this, a second pass would stack another slug."""
+    assert outil.already_annotated(stem) is annote
 
 
 def test_an_already_annotated_file_is_skipped(outil, tmp_path):

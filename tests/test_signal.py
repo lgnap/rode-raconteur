@@ -36,8 +36,8 @@ def test_noise_is_not_timecode():
 
 
 def test_loud_noise_is_not_timecode():
-    # Pleine échelle (la garde d'amplitude laisse passer) mais facteur de crête
-    # élevé : seule la condition de crête peut rejeter ce signal.
+    # Full scale (the amplitude guard lets it through) but a high crest factor:
+    # only the crest condition can reject this signal.
     rng = np.random.default_rng(2)
     loud = (rng.normal(0, 8000, 48000)).clip(-32768, 32767).astype(np.int16)
     assert np.max(np.abs(loud.astype(np.float64))) / 32768 > 0.5
@@ -50,8 +50,8 @@ def test_silence_is_not_timecode():
 
 
 def test_quiet_square_wave_is_not_flagged():
-    # Un signal carré de faible niveau n'est pas du LTC : le garde-fou exige
-    # une amplitude proche de la pleine échelle.
+    # A low-level square wave is not LTC: the guard requires an amplitude close
+    # to full scale.
     assert looks_like_timecode(_square(amp=2000)) is False
 
 
@@ -83,6 +83,6 @@ def test_rms_dbfs_of_silence_is_floored():
 
 
 def test_empty_capture_is_not_timecode():
-    # Une prise vide doit finir en « silence », pas en erreur : `np.max` sur un
-    # tableau vide lèverait ValueError.
+    # An empty take must end up as "silence", not an error: `np.max` on an
+    # empty array would raise ValueError.
     assert looks_like_timecode(np.zeros(0, dtype=np.int16)) is False

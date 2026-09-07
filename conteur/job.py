@@ -1,4 +1,4 @@
-"""Un travail de nommage : lire le WAV, décider, renommer. Sans Qt."""
+"""One naming job: read the WAV, decide, rename. No Qt."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -20,15 +20,15 @@ from conteur.titler import make_title_tracked
 from conteur.transcribe import transcribe
 
 
-# Au-dessus de ce niveau RMS, un fichier est audible : s'il ne contient pas de
-# parole, ce n'est pas du silence.
+# Above this RMS level a file is audible: if it holds no speech, it is not
+# silence either.
 AUDIBLE_DBFS = -55.0
 
-# Pour nommer un fichier, il suffit d'en écouter le début : transcrire une heure
-# d'audio pour produire trois mots est un gâchis. En deçà de ce plafond la prise
-# est transcrite en entier, ce qui donne de meilleures statistiques de mots-clés
-# et plus de contexte au titrage. Deux fenêtres au plus sont examinées — la
-# seconde ne sert qu'aux prises dont le début est muet.
+# Naming a file only requires listening to its beginning: transcribing an hour
+# of audio to produce three words is a waste. Below this cap the take is
+# transcribed in full, which gives better keyword statistics and more context
+# for titling. At most two windows are examined — the second one only serves
+# takes whose beginning is silent.
 NAMING_SAMPLE_S = 300.0
 NAMING_WINDOWS = 2
 
@@ -41,12 +41,12 @@ class NameResult:
 
 
 def _read_wav(path: Path) -> np.ndarray:
-    # Pas `wave` : il refuse le format 3 (flottant IEEE), celui des
-    # enregistrements embarqués RØDE. Sans cela l'application ne saurait
-    # nommer que ses propres fichiers.
+    # Not `wave`: it refuses format 3 (IEEE float), which is what the RØDE
+    # onboard recordings use. Without this the application could only name its
+    # own files.
     #
-    # La lecture est bornée à ce que le nommage peut consulter : au-delà, on
-    # convertirait des centaines de Mo pour ne jamais les regarder.
+    # The read is bounded to what naming can consult: beyond that we would
+    # convert hundreds of MB only to never look at them.
     budget = int(NAMING_SAMPLE_S * NAMING_WINDOWS * CAPTURE_RATE)
     return read_samples(path, max_frames=budget)
 
@@ -58,11 +58,11 @@ def _renamed(wav_path: Path, when: datetime, slug: str, origin: str) -> NameResu
 
 
 def _transcribe_sample(model, samples) -> tuple[str, float]:
-    """Transcrit le début, et une seconde fenêtre seulement s'il est muet.
+    """Transcribe the beginning, and a second window only if it is silent.
 
-    Nommer ne demande pas d'entendre tout le fichier : une histoire se
-    caractérise par son ouverture. Une prise dont les premières minutes sont
-    silencieuses garde toutefois sa chance avec une fenêtre suivante.
+    Naming does not require hearing the whole file: a story is characterised by
+    how it opens. A take whose first minutes are silent still gets its chance
+    with a following window.
     """
     window = int(NAMING_SAMPLE_S * CAPTURE_RATE)
     for index in range(NAMING_WINDOWS):
@@ -78,14 +78,14 @@ def _transcribe_sample(model, samples) -> tuple[str, float]:
 
 def decide_name(samples, model, title_fn=make_title_tracked,
                 threshold_s: float = 12.0) -> tuple[str, str]:
-    """Décide (slug, origine) pour un signal déjà lu. Sans I/O ni renommage.
+    """Decide (slug, origin) for an already-read signal. No I/O, no renaming.
 
-    Partagée avec les outils hors interface, pour que la reconnaissance y soit
-    la même que dans l'application plutôt qu'une copie qui divergerait.
+    Shared with the command-line tools, so that recognition there is the same
+    as in the application rather than a copy that would drift.
     """
     if samples.size == 0:
-        # Prise vide (récepteur parti avant le premier bloc) : c'est du
-        # silence, pas un échec.
+        # Empty take (receiver gone before the first block): that is silence,
+        # not a failure.
         return SILENCE, ORIGIN_SILENCE
 
     if looks_like_timecode(samples):
@@ -93,8 +93,8 @@ def decide_name(samples, model, title_fn=make_title_tracked,
 
     text, speech_s = _transcribe_sample(model, samples)
 
-    # `title_fn` rend (titre, origine) ; on capte l'origine au passage pour
-    # distinguer un titre du modèle d'un repli sur mots-clés.
+    # `title_fn` returns (title, origin); we capture the origin on the way past
+    # to tell a model-written title from a fallback on keywords.
     seen_origin = ORIGIN_TRANSCRIPT
 
     def make_title(t: str) -> str:
@@ -106,7 +106,8 @@ def decide_name(samples, model, title_fn=make_title_tracked,
     origin = ORIGIN_SILENCE if slug == SILENCE else seen_origin
 
     if slug == SILENCE and rms_dbfs(samples) > AUDIBLE_DBFS:
-        # Sonore mais sans parole reconnue : l'appeler « silence » serait faux.
+        # Audible but with no recognised speech: calling it "silence" would be
+        # wrong.
         slug, origin = NO_SPEECH, ORIGIN_NO_SPEECH
     return slug, origin
 
@@ -118,15 +119,15 @@ def name_recording(
     title_fn=make_title_tracked,
     threshold_s: float = 12.0,
 ) -> NameResult:
-    """Nomme un enregistrement déjà écrit sur disque. Ne perd jamais le fichier."""
+    """Name a recording already on disk. Never loses the file."""
     slug, origin = decide_name(_read_wav(wav_path), model, title_fn, threshold_s)
-    # Une prise timecode est renommée elle aussi : sinon le rattrapage des
-    # orphelins la redétecterait à chaque lancement, indéfiniment.
+    # A timecode take is renamed too: otherwise orphan recovery would detect it
+    # again at every launch, forever.
     return _renamed(wav_path, when, slug, origin)
 
 
 def rename_take(path: Path, new_text: str, when: datetime) -> Path:
-    """Renomme une prise à la demande. Un nom vide laisse le fichier tel quel."""
+    """Rename a take on request. An empty name leaves the file untouched."""
     slug = slugify(new_text)
     if not slug:
         return path

@@ -106,13 +106,13 @@ def test_record_survives_a_raising_on_block():
 
     out = record(pa, RxDevice(0, "Wireless PRO RX"), threading.Event(), on_block=boom)
 
-    # Le rappel a échoué deux fois, mais la capture n'a rien perdu.
+    # The callback failed twice, but the capture lost nothing.
     assert out.tolist() == [1, 2, 3, 4]
 
 
 def test_record_keeps_audio_when_the_receiver_disappears():
-    # Le récepteur est débranché en cours de prise : la lecture lève, la boucle
-    # s'arrête, et ce qui a déjà été capté est conservé.
+    # The receiver is unplugged mid-take: the read raises, the loop stops, and
+    # what was already captured is kept.
     interleaved = np.array([1, -1, 2, -2], dtype=np.int16)
     reads = []
 
@@ -126,7 +126,7 @@ def test_record_keeps_audio_when_the_receiver_disappears():
     stream.read = read_then_fail
     pa = FakePyAudio(stream)
 
-    # `stop` n'est jamais armé : seule l'erreur de lecture peut sortir de la boucle.
+    # `stop` is never set: only the read error can leave the loop.
     out = record(pa, RxDevice(0, "Wireless PRO RX"), threading.Event())
 
     assert out.tolist() == [1, 2]
@@ -134,9 +134,9 @@ def test_record_keeps_audio_when_the_receiver_disappears():
 
 
 def test_channel_parity_survives_a_short_odd_block():
-    # Une lecture courte au compte d'échantillons impair : si le canal gauche
-    # n'était extrait qu'une fois, à la fin, tout ce qui suit basculerait sur
-    # le canal droit — celui qui porte le timecode.
+    # A short read with an odd sample count: if the left channel were extracted
+    # only once, at the end, everything after it would shift onto the right
+    # channel — the one that carries the timecode.
     odd = np.array([1, -1, 2], dtype=np.int16)
     even = np.array([3, -3, 4, -4], dtype=np.int16)
     stream = FakeStream([odd.tobytes(), even.tobytes()])
@@ -148,8 +148,8 @@ def test_channel_parity_survives_a_short_odd_block():
 
 
 def test_teardown_failure_never_loses_the_capture():
-    # Récepteur arraché : `stop_stream` lève, comme le fait PortAudio sur un
-    # périphérique disparu. L'audio déjà capté doit survivre.
+    # Receiver yanked out: `stop_stream` raises, as PortAudio does on a device
+    # that has vanished. The audio already captured must survive.
     interleaved = np.array([1, -1, 2, -2], dtype=np.int16)
     reads = []
 

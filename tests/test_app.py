@@ -42,7 +42,7 @@ def test_takes_list_shows_pending_then_final_name(qapp):
     assert "…" in win.take_text(row)
     win.update_take(row, "2026-09-06_143208_le-loup.wav", "title")
     assert "le-loup" in win.take_text(row)
-    # Le jeton interne reste "title" ; l'interface, elle, est en français.
+    # The internal token stays "title"; the UI itself is in French.
     assert "titre généré" in win.take_text(row)
     assert "title" not in win.take_text(row)
 
@@ -64,8 +64,8 @@ def test_stop_writes_the_wav_before_submitting_the_naming_job(qapp, tmp_path, mo
             pass
 
         def submit(self, path, when, on_done):
-            # On note l'existence du fichier AU MOMENT de la soumission : c'est
-            # l'ordre qui est testé, pas seulement le résultat final.
+            # We record whether the file exists AT SUBMIT TIME: what is tested is
+            # the ordering, not just the final result.
             self.submitted.append((path, path.exists()))
 
     monkeypatch.setattr(app_mod, "destination_dir", lambda when: tmp_path)
@@ -78,8 +78,8 @@ def test_stop_writes_the_wav_before_submitting_the_naming_job(qapp, tmp_path, mo
     queue = FakeQueue()
     win = MainWindow(find_rx=lambda: Dev(), queue=queue, pa=object())
 
-    win.toggle_recording()   # démarre
-    win.toggle_recording()   # arrête
+    win.toggle_recording()   # start
+    win.toggle_recording()   # stop
 
     assert len(queue.submitted) == 1
     path, existed_at_submit = queue.submitted[0]
@@ -94,9 +94,9 @@ def test_level_bar_starts_at_floor(qapp):
 
 
 def test_set_level_is_directly_callable_and_moves_the_bar(qapp):
-    # Le mètre doit être testable sans passer par le QTimer : la boucle
-    # d'évènements ne tourne pas dans les tests (offscreen, pas d'app.exec()),
-    # donc le déclenchement périodique réel du QTimer n'est pas couvert ici.
+    # The meter must be testable without going through the QTimer: the event
+    # loop does not run in the tests (offscreen, no app.exec()), so the real
+    # periodic firing of the QTimer is not covered here.
     import numpy as np
 
     win = MainWindow(find_rx=lambda: None, queue=None)
@@ -128,8 +128,8 @@ def test_level_timer_runs_only_during_capture(qapp, tmp_path, monkeypatch):
     release = threading.Event()
 
     def fake_record(pa, device, stop, on_block=None):
-        # Bloque jusqu'à ce que le test lève `stop`, pour observer le minuteur
-        # pendant que la capture est réellement en cours.
+        # Block until the test sets `stop`, so the timer can be observed while
+        # the capture is genuinely running.
         release.wait(1.0)
         return np.array([1, 2, 3], dtype=np.int16)
 
@@ -140,18 +140,18 @@ def test_level_timer_runs_only_during_capture(qapp, tmp_path, monkeypatch):
     win = MainWindow(find_rx=lambda: Dev(), queue=FakeQueue(), pa=object())
 
     assert win._level_timer.isActive() is False
-    win.toggle_recording()   # démarre
+    win.toggle_recording()   # start
     assert win._level_timer.isActive() is True
     release.set()
-    win.toggle_recording()   # arrête
+    win.toggle_recording()   # stop
     assert win._level_timer.isActive() is False
 
 
 def test_write_failure_is_reported_with_path_and_cause(qapp):
     win = MainWindow(find_rx=lambda: None, queue=None)
-    win.report_write_error("/n/existe/pas/a.wav", PermissionError("refusé"))
+    win.report_write_error("/does/not/exist/a.wav", PermissionError("refusé"))
     text = win.status_label.text()
-    assert "/n/existe/pas/a.wav" in text
+    assert "/does/not/exist/a.wav" in text
     assert "refusé" in text
 
 
@@ -190,8 +190,8 @@ def test_write_failure_during_finish_capture_is_reported_and_not_enqueued(
     queue = FakeQueue()
     win = MainWindow(find_rx=lambda: Dev(), queue=queue, pa=object())
 
-    win.toggle_recording()   # démarre
-    win.toggle_recording()   # arrête : l'écriture échoue
+    win.toggle_recording()   # start
+    win.toggle_recording()   # stop: the write fails
 
     assert queue.submitted == []
     assert win._rows == []
@@ -222,12 +222,12 @@ def test_rename_take_renames_the_file_and_updates_the_row(qapp, tmp_path):
 
 
 def test_manual_rename_survives_a_late_automatic_result(qapp, tmp_path):
-    # Course réelle : l'utilisateur renomme la prise à la main avant que la
-    # file de nommage automatique n'ait fini son travail sur cette même
-    # ligne. La file tient encore le chemin provisoire d'origine ; comme il
-    # n'existe plus après le renommage manuel, `name_recording` échoue et le
-    # résultat qui arrive ensuite est un "échec" tardif. Il ne doit pas
-    # écraser le nom donné à la main.
+    # Real race: the user renames the take by hand before the automatic naming
+    # queue has finished its work on that same row. The queue still holds the
+    # original provisional path; since it no longer exists after the manual
+    # rename, `name_recording` fails and the result that arrives afterwards is
+    # a late "failed". It must not overwrite the name given by hand.
+    #
     from datetime import datetime
 
     when = datetime(2026, 9, 6, 14, 32, 8)
@@ -242,7 +242,7 @@ def test_manual_rename_survives_a_late_automatic_result(qapp, tmp_path):
     assert "le-loup-gris" in win.take_text(row)
     assert "manuel" in win.take_text(row)
 
-    # Résultat automatique tardif pour la même ligne, sur le nom provisoire.
+    # Late automatic result for the same row, on the provisional name.
     win.take_named.emit(row, path.name, "échec")
 
     assert "le-loup-gris" in win.take_text(row)
@@ -278,8 +278,8 @@ def test_successful_naming_updates_takes_meta_with_the_final_path(
     monkeypatch.setattr(app_mod, "load_model", lambda: object())
 
     win = MainWindow(find_rx=lambda: Dev(), queue=FakeQueue(), pa=object())
-    win.toggle_recording()   # démarre
-    win.toggle_recording()   # arrête : la file (synchrone ici) nomme aussitôt
+    win.toggle_recording()   # start
+    win.toggle_recording()   # stop: the queue (synchronous here) names at once
 
     row = 0
     final_path, when = win._takes_meta[row]
@@ -312,7 +312,7 @@ class Dev:
 
 
 class RecordingQueue:
-    """File bouchonnée qui note ce qu'on lui soumet."""
+    """Stubbed queue that records what is submitted to it."""
 
     def __init__(self):
         self.submitted = []
@@ -335,9 +335,9 @@ class RecordingQueue:
 def test_capture_thread_failure_is_reported_and_does_not_crash_the_window(
     qapp, tmp_path, monkeypatch,
 ):
-    # Le récepteur part entre la détection et `pa.open()` : `record` lève dans
-    # le fil de capture. Sans garde, `_samples` reste None et `write_wav(None)`
-    # fait lever un AttributeError au cœur d'un slot Qt.
+    # The receiver goes away between detection and `pa.open()`: `record` raises
+    # on the capture thread. Without a guard, `_samples` stays None and
+    # `write_wav(None)` raises an AttributeError inside a Qt slot.
     import conteur.app as app_mod
 
     def exploding_record(pa, device, stop, on_block=None):
@@ -350,8 +350,8 @@ def test_capture_thread_failure_is_reported_and_does_not_crash_the_window(
     queue = RecordingQueue()
     win = MainWindow(find_rx=lambda: Dev(), queue=queue, pa=object())
 
-    win.toggle_recording()   # démarre
-    win.toggle_recording()   # arrête : le fil a levé
+    win.toggle_recording()   # start
+    win.toggle_recording()   # stop: the thread raised
 
     assert queue.submitted == []
     assert win._rows == []
@@ -384,20 +384,20 @@ def test_stop_control_stays_enabled_when_the_receiver_vanishes_mid_capture(
     queue = RecordingQueue()
     win = MainWindow(find_rx=lambda: found[0], queue=queue, pa=object())
 
-    win.toggle_recording()   # démarre
-    found[0] = None          # le RX disparaît pendant la prise
+    win.toggle_recording()   # start
+    found[0] = None          # the RX vanishes mid-take
 
     win.refresh_device()
 
-    # Le bouton porte « Arrêter » : le désactiver rendrait la prise
-    # inarrêtable et l'audio déjà capté définitivement inatteignable.
+    # The button reads "Arrêter": disabling it would make the take unstoppable
+    # and the audio already captured permanently unreachable.
     assert win.record_button.isEnabled() is True
     assert win.record_button.text() == "Arrêter"
     assert app_mod.RX_LOST in win.status_label.text()
 
     release.set()
     win._capture.join(2.0)
-    win.refresh_device()     # le fil a rendu la main : le fragment est écrit
+    win.refresh_device()     # the thread returned: the fragment is written
 
     assert len(win._rows) == 1
     assert app_mod.INCOMPLETE in win.take_text(0)
@@ -406,8 +406,8 @@ def test_stop_control_stays_enabled_when_the_receiver_vanishes_mid_capture(
 
 
 def test_disconnect_is_detected_by_the_real_poll_timer(qapp, tmp_path, monkeypatch):
-    # Le chemin réel passe par le QTimer de 2 s : on le raccourcit et on fait
-    # tourner une vraie boucle d'évènements plutôt que d'appeler la fonction.
+    # The real path goes through the 2 s QTimer: we shorten it and run a real
+    # event loop rather than calling the function directly.
     import numpy as np
     from PySide6.QtTest import QTest
 
@@ -450,8 +450,8 @@ def test_a_late_automatic_name_does_not_erase_the_incomplete_marker(qapp, tmp_pa
 
 
 def test_write_error_survives_the_device_poll(qapp):
-    # Le sondage toutes les deux secondes réécrivait le nom du périphérique
-    # par-dessus le message d'erreur : il disparaissait avant d'être lu.
+    # Polling every two seconds used to rewrite the device name over the error
+    # message: it vanished before it could be read.
     win = MainWindow(find_rx=lambda: Dev(), queue=None)
     win.report_write_error("/plein/a.wav", OSError("disque plein"))
 
@@ -484,7 +484,7 @@ def test_a_new_recording_clears_a_stale_error(qapp, tmp_path, monkeypatch):
 
 
 class FakePa:
-    """Contexte PortAudio bouchonné : sa liste de périphériques est figée."""
+    """Stubbed PortAudio context: its device list is frozen."""
 
     def __init__(self, names=()):
         self.devices = [{"name": n, "maxInputChannels": 2} for n in names]
@@ -501,15 +501,15 @@ class FakePa:
 
 
 def test_rename_on_a_stale_path_is_reported_instead_of_crashing(qapp, tmp_path):
-    # La file a déjà renommé le fichier, mais `take_named` n'a pas encore été
-    # délivré : la ligne tient un chemin provisoire périmé. Un double-clic
+    # The queue has already renamed the file, but `take_named` has not been
+    # delivered yet: the row holds a stale provisional path. A double-click
     # levait alors FileNotFoundError dans le fil graphique.
     from datetime import datetime
 
     import conteur.app as app_mod
 
     when = datetime(2026, 9, 6, 14, 32, 8)
-    stale = tmp_path / "2026-09-06_143208_sans-nom.wav"   # jamais créé
+    stale = tmp_path / "2026-09-06_143208_sans-nom.wav"   # never created
 
     win = MainWindow(find_rx=lambda: None, queue=None)
     row = win.add_take(stale.name)
@@ -527,15 +527,15 @@ def test_rename_on_a_stale_path_is_reported_instead_of_crashing(qapp, tmp_path):
 def test_hot_plug_is_seen_only_after_the_audio_context_is_recreated(
     qapp, monkeypatch,
 ):
-    # PortAudio énumère les périphériques à Pa_Initialize() et PyAudio n'offre
-    # pas de rebalayage : sans recréer le contexte, le sondage relit
-    # indéfiniment l'instantané du démarrage et le branchement passe inaperçu.
+    # PortAudio enumerates devices at Pa_Initialize() and PyAudio offers no
+    # rescan: without rebuilding the context, polling forever re-reads the
+    # startup snapshot and the new plug goes unnoticed.
     import conteur.app as app_mod
 
     monkeypatch.setattr(app_mod, "load_model", lambda: object())
 
     contexts = [FakePa(["HDA Intel PCH"]),                      # toujours rien
-                FakePa(["HDA Intel PCH", "Wireless PRO RX"])]   # RX branché
+                FakePa(["HDA Intel PCH", "Wireless PRO RX"])]   # RX plugged in
     made = []
 
     def factory():
@@ -546,7 +546,7 @@ def test_hot_plug_is_seen_only_after_the_audio_context_is_recreated(
     first = FakePa(["HDA Intel PCH"])
     win = MainWindow(pa=first, pa_factory=factory)
 
-    # Le contexte du démarrage ne voyait pas le RX ; il a été rendu.
+    # The startup context could not see the RX; it has been released.
     assert first.terminated is True
     assert win.record_button.isEnabled() is False
 
@@ -554,7 +554,7 @@ def test_hot_plug_is_seen_only_after_the_audio_context_is_recreated(
 
     assert win.record_button.isEnabled() is True
     assert "Wireless PRO RX" in win.status_label.text()
-    assert made[0].terminated is True          # aucun contexte n'est laissé ouvert
+    assert made[0].terminated is True          # no context is left open
     assert win._pa is made[1]
     assert win._pa.terminated is False
 
@@ -592,7 +592,7 @@ def test_the_audio_context_is_never_recreated_during_a_capture(
 
     win.refresh_device()
 
-    # Recréer le contexte pendant la capture emporterait le flux ouvert.
+    # Rebuilding the context during a capture would take the open stream away.
     assert calls == []
     release.set()
     win._capture.join(2.0)
@@ -616,7 +616,7 @@ def test_the_model_is_loaded_at_startup_and_off_the_gui_thread(qapp, monkeypatch
     win = MainWindow(find_rx=lambda: Dev(), queue=RecordingQueue(), pa=object())
     win._model_loader.join(5.0)
 
-    assert win._model is model                      # chargé sans aucune capture
+    assert win._model is model                      # loaded without any capture
     assert loaded_in and loaded_in[0] is not threading.main_thread()
 
 
@@ -697,8 +697,8 @@ def test_closing_the_window_drains_the_queue_and_releases_portaudio(
 
     win.close()
 
-    # La file reçoit sa sentinelle après les travaux déjà en attente : ceux-ci
-    # ont le temps imparti pour aboutir plutôt que d'être jetés en silence.
+    # The queue gets its sentinel after the jobs already waiting: those get the
+    # allotted time to finish rather than being silently thrown away.
     assert queue.stopped is True
     assert queue.joined == app_mod.SHUTDOWN_TIMEOUT_S
     assert pa.terminated is True
@@ -734,12 +734,12 @@ def test_the_level_meter_survives_a_capture_with_no_block_yet(qapp):
     win = MainWindow(find_rx=lambda: None, queue=None)
     win._last_block = None
 
-    win._refresh_level()                 # aucun bloc : rien à mesurer
+    win._refresh_level()                 # no block: nothing to measure
 
     assert win.level_bar.value() == win.level_bar.minimum()
 
-    # Et par le vrai minuteur, qui tourne dès le début de la capture, avant
-    # que le premier bloc ne soit arrivé.
+    # And through the real timer, which runs from the start of the capture,
+    # before the first block has arrived.
     win._level_timer.setInterval(5)
     win._level_timer.start()
     QTest.qWait(60)
@@ -748,8 +748,8 @@ def test_the_level_meter_survives_a_capture_with_no_block_yet(qapp):
 
 
 def test_take_named_crosses_the_thread_boundary(qapp, tmp_path):
-    # La file de nommage vit dans un autre fil : le résultat n'atteint la
-    # ligne qu'au travers du signal, en connexion différée.
+    # The naming queue lives on another thread: the result only reaches the row
+    # through the signal, on a queued connection.
     import threading
     from datetime import datetime
 
@@ -775,7 +775,7 @@ def test_take_named_crosses_the_thread_boundary(qapp, tmp_path):
     assert win._takes_meta[row][0].name == "2026-09-06_143208_le-loup.wav"
 
 
-# --- remontée de la cause d'un échec de nommage ---
+# --- surfacing the cause of a naming failure ---
 
 
 def test_describe_error_translates_the_cublas_failure():
@@ -783,7 +783,7 @@ def test_describe_error_translates_the_cublas_failure():
 
     reason = describe_error(RuntimeError("Library libcublas.so.12 is not found"))
     assert "CUDA" in reason
-    assert "libcublas" not in reason          # l'utilisateur n'a pas à décoder ça
+    assert "libcublas" not in reason          # the user should not decode that
 
 
 def test_describe_error_keeps_an_unknown_cause_intact():
@@ -802,7 +802,7 @@ def test_naming_failure_reason_is_shown_and_survives_the_device_poll(qapp):
     assert "2026-09-06_162855_sans-nom.wav" in win.status_label.text()
     assert "CUDA" in win.status_label.text()
 
-    # Le sondage périphérique ne doit pas effacer la cause.
+    # The device poll must not wipe the cause.
     win.refresh_device()
     assert "CUDA" in win.status_label.text()
 
@@ -811,8 +811,8 @@ def test_naming_failure_reason_is_shown_and_survives_the_device_poll(qapp):
 
 
 def test_ctrl_c_asks_the_application_to_quit(qapp):
-    """Qt tourne en C++ : sans minuteur rendant la main à l'interpréteur, le
-    gestionnaire Python ne s'exécute jamais et Ctrl+C reste sans effet."""
+    """Qt runs in C++: without a timer handing control back to the interpreter,
+    the Python handler never runs and Ctrl+C has no effect."""
     import signal as sig
 
     from conteur.app import install_interrupt_handler
@@ -932,7 +932,7 @@ def test_a_recovered_orphan_can_be_renamed_by_hand(qapp, tmp_path):
     path = _orphan(tmp_path)
     win = MainWindow(find_rx=lambda: None, queue=FakeQueue(), orphan_root=tmp_path)
     win.recover_orphans()
-    # _takes_meta doit être alimenté, sinon le renommage manuel lèverait.
+    # _takes_meta must be populated, or the manual rename would raise.
     win.rename_take(0, "Le loup gris")
     assert (tmp_path / "2026-09-06_162542_le-loup-gris.wav").exists()
     assert not path.exists()

@@ -1,4 +1,4 @@
-"""Repérage du récepteur. L'objet PyAudio est injecté."""
+"""Locating the receiver. The PyAudio object is injected."""
 
 from dataclasses import dataclass
 
@@ -12,7 +12,7 @@ class RxDevice:
 
 
 def find_rx(pa) -> RxDevice | None:
-    """Première entrée dont le nom désigne le RX et qui accepte 2 canaux."""
+    """First entry whose name denotes the RX and that accepts 2 channels."""
     for i in range(pa.get_device_count()):
         info = pa.get_device_info_by_index(i)
         if NEEDLE not in str(info["name"]).lower():

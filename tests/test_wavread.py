@@ -1,4 +1,4 @@
-"""Lecture des formats WAV que produit le matériel, pas seulement les nôtres."""
+"""Reading the WAV formats the hardware produces, not only our own."""
 
 import struct
 import wave
@@ -26,7 +26,7 @@ def test_reads_our_own_16_bit_files(tmp_path):
 
 
 def test_reads_32_bit_float_which_the_wave_module_refuses(tmp_path):
-    """Le format des enregistrements embarqués RØDE. `wave` lève dessus."""
+    """The format of the RØDE onboard recordings. `wave` raises on it."""
     path = tmp_path / "float.wav"
     _write_riff(path, 3, 32, 1, 48000,
                 np.array([0.0, 0.5, -0.5], dtype="<f4").tobytes())
@@ -64,8 +64,8 @@ def test_only_the_first_channel_is_kept(tmp_path):
 def test_extensible_resolves_to_its_subformat(tmp_path):
     path = tmp_path / "ext.wav"
     fmt = struct.pack("<HHIIHH", 0xFFFE, 1, 48000, 48000 * 4, 4, 32)
-    # cbSize, wValidBitsPerSample, dwChannelMask, puis le GUID SubFormat :
-    # le format réel occupe ses deux premiers octets, à l'offset 24 du chunk.
+    # cbSize, wValidBitsPerSample, dwChannelMask, then the SubFormat GUID:
+    # the real format sits in its first two bytes, at offset 24 of the chunk.
     fmt += struct.pack("<HHI", 22, 32, 0x4)
     fmt += struct.pack("<H", 3) + b"\x00" * 14
     body = b"fmt " + struct.pack("<I", len(fmt)) + fmt
@@ -78,7 +78,7 @@ def test_extensible_resolves_to_its_subformat(tmp_path):
 def test_an_unsupported_format_says_so(tmp_path):
     path = tmp_path / "bad.wav"
     _write_riff(path, 99, 12, 1, 48000, b"\0\0")
-    with pytest.raises(ValueError, match="non pris en charge"):
+    with pytest.raises(ValueError, match="unsupported WAV format"):
         read_samples(path)
 
 
@@ -90,8 +90,8 @@ def test_a_file_that_is_not_wave_is_refused(tmp_path):
 
 
 def test_reading_can_be_bounded(tmp_path):
-    """Lire les 691 Mo d'une prise d'une heure pour n'en transcrire que cinq
-    minutes coûte du processeur pour rien."""
+    """Reading the 691 MB of an hour-long take to transcribe only five minutes
+    of it burns CPU for nothing."""
     path = tmp_path / "long.wav"
     payload = np.arange(1000, dtype="<i2").tobytes()
     _write_riff(path, 1, 16, 1, 48000, payload)
@@ -108,8 +108,8 @@ def test_a_bound_larger_than_the_file_is_harmless(tmp_path):
 
 
 def test_the_bound_counts_frames_not_bytes(tmp_path):
-    """En stéréo 16 bits une trame fait quatre octets : confondre les deux
-    tronquerait au quart de ce qui est demandé."""
+    """In 16-bit stereo a frame is four bytes: confusing the two would truncate
+    to a quarter of what was asked for."""
     path = tmp_path / "stereo.wav"
     interleaved = np.array([1, -1, 2, -2, 3, -3, 4, -4], dtype="<i2").tobytes()
     _write_riff(path, 1, 16, 2, 48000, interleaved)

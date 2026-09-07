@@ -1,4 +1,4 @@
-"""Fabrication d'un titre à partir d'une transcription."""
+"""Making a title out of a transcript."""
 
 import re
 import unicodedata
@@ -6,6 +6,7 @@ from collections import Counter
 
 from conteur.naming import ORIGIN_KEYWORDS, ORIGIN_TITLE
 
+# French stopwords: the transcripts, and the titles, are in French.
 STOPWORDS = {
     "alors", "apres", "aussi", "autre", "avait", "avec", "avoir", "bien",
     "cela", "cette", "comme", "dans", "deux", "dire", "donc", "elle", "elles",
@@ -24,7 +25,7 @@ def _fold(text: str) -> str:
 
 
 def keywords(text: str, n: int = 3) -> list[str]:
-    """Les n mots les plus fréquents, hors mots-vides, nombres et mots courts."""
+    """The n most frequent words, minus stopwords, numbers and short words."""
     words = re.findall(r"[a-z]+", _fold(text))
     kept = [w for w in words if len(w) >= MIN_LEN and w not in STOPWORDS]
     return [w for w, _ in Counter(kept).most_common(n)]
@@ -32,9 +33,9 @@ def keywords(text: str, n: int = 3) -> list[str]:
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen3:8b"
-# Mesuré : 30 s au premier appel, le temps qu'Ollama charge qwen3:8b en VRAM,
-# puis 0,7 s à chaud. Un délai de 20 s faisait donc systématiquement basculer le
-# premier titre de chaque session sur le repli mots-clés.
+# Measured: 30 s on the first call, the time Ollama needs to load qwen3:8b
+# into VRAM, then 0.7 s warm. A 20 s timeout therefore sent the first title of
+# every session to the keyword fallback, every time.
 TIMEOUT_S = 60.0
 MAX_TITLE_LEN = 120
 
@@ -49,12 +50,12 @@ _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 def strip_think(raw: str) -> str:
-    """Retire les blocs de raisonnement que qwen3 peut émettre malgré think=False."""
+    """Strip the reasoning blocks qwen3 may emit despite think=False."""
     return _THINK.sub("", raw).strip()
 
 
 def title_from_ollama(text: str, post=None, timeout_s: float = TIMEOUT_S) -> str | None:
-    """Titre court via Ollama, ou None si la réponse est inexploitable."""
+    """A short title via Ollama, or None if the answer is unusable."""
     if post is None:
         import requests
 
@@ -67,11 +68,11 @@ def title_from_ollama(text: str, post=None, timeout_s: float = TIMEOUT_S) -> str
                 "prompt": PROMPT + text,
                 "stream": False,
                 "think": False,
-                # Rend la VRAM immédiatement : mesuré, Whisper occupe 2033 Mio
-                # et qwen3:8b 5470 sur 8192. Les deux tiennent au repos, mais
-                # les 690 Mio restants ne suffisent pas à l'espace de travail
-                # d'une transcription de plusieurs minutes — d'où des
-                # « CUDA out of memory » en série.
+                # Give the VRAM back immediately: measured, Whisper takes
+                # 2033 MiB and qwen3:8b 5470 out of 8192. Both fit at rest,
+                # but the remaining 690 MiB are not enough for the working set
+                # of a multi-minute transcription — hence a run of
+                # "CUDA out of memory".
                 "keep_alive": 0,
             },
             timeout=timeout_s,
@@ -91,16 +92,15 @@ def title_from_ollama(text: str, post=None, timeout_s: float = TIMEOUT_S) -> str
 
 
 def make_title(text: str, post=None) -> str:
-    """Titre Ollama si possible, sinon les mots-clés. Ne lève jamais."""
+    """An Ollama title when possible, keywords otherwise. Never raises."""
     return make_title_tracked(text, post=post)[0]
 
 
 def make_title_tracked(text: str, post=None) -> tuple[str, str]:
-    """Comme make_title, mais dit d'où vient le résultat.
+    """Like make_title, but says where the result came from.
 
-    L'interface a besoin de distinguer un titre produit par le modèle d'un
-    repli sur les mots-clés : c'est une information utile quand on relit une
-    liste de prises.
+    The UI needs to tell a model-written title from a fallback on keywords:
+    that is useful information when reading back a list of takes.
     """
     title = title_from_ollama(text, post=post)
     if title:

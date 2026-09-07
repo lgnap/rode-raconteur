@@ -72,8 +72,8 @@ def test_keyword_fallback_is_reported_as_such(tmp_path):
 
 
 def test_audible_without_speech_is_not_called_silence(tmp_path):
-    """Mesuré sur du matériel réel : des prises culminant à -0,1 dBFS étaient
-    nommées « silence » parce que le VAD n'y trouvait pas de parole."""
+    """Measured on real material: takes peaking at -0.1 dBFS were named
+    "silence" because the VAD found no speech in them."""
     path = _wav(tmp_path, _voice())          # bruit fort, aucune parole reconnue
     result = name_recording(path, WHEN, FakeModel([]),
                             title_fn=lambda t: ("x", "title"))
@@ -97,8 +97,8 @@ def test_timecode_channel_is_refused_and_file_kept(tmp_path):
     result = name_recording(path, WHEN, FakeModel([Seg(0.0, 4.0, "bruit")]),
                             title_fn=lambda t: ("x", "title"))
     assert result.origin == "timecode"
-    # Renommée, pas laissée sous son nom provisoire : sinon elle serait
-    # redétectée comme orpheline à chaque lancement. L'audio est conservé.
+    # Renamed, not left under its provisional name: otherwise it would be
+    # detected as an orphan at every launch. The audio is kept.
     assert result.path.name == "2026-09-06_143208_timecode.wav"
     assert result.path.exists()
     assert not path.exists()
@@ -138,9 +138,9 @@ def test_rename_take_rejects_an_empty_name(tmp_path):
 
 
 def test_empty_capture_is_named_silence_not_failed(tmp_path):
-    # Récepteur parti avant le premier bloc : la prise est vide. Elle doit
-    # ressortir en « silence », pas faire lever le travail de nommage — la
-    # ligne afficherait alors « échec ».
+    # Receiver gone before the first block: the take is empty. It must come
+    # out as "silence", not make the naming job raise — the row would then
+    # display "failed".
     path = _wav(tmp_path, np.zeros(0, dtype=np.int16))
     result = name_recording(path, WHEN, FakeModel([]),
                             title_fn=lambda t: ("x", "title"))
@@ -149,11 +149,11 @@ def test_empty_capture_is_named_silence_not_failed(tmp_path):
     assert result.path.name == "2026-09-06_143208_silence.wav"
 
 
-# --- on n'écoute que le début pour nommer ---
+# --- only the beginning is listened to for naming ---
 
 
 class RecordingModel:
-    """Doublure qui note la durée de ce qu'on lui donne à transcrire."""
+    """Stand-in that records the duration of what it is given to transcribe."""
 
     def __init__(self, replies):
         self.replies = list(replies)
@@ -166,10 +166,10 @@ class RecordingModel:
 
 
 def test_only_the_head_is_transcribed(tmp_path, monkeypatch):
-    """Transcrire une heure d'audio pour produire trois mots est un gâchis.
+    """Transcribing an hour of audio to produce three words is a waste.
 
-    Le plafond est réduit dans le test : ce qui est vérifié, c'est qu'il est
-    respecté, pas sa valeur du moment.
+    The cap is lowered in the test: what is verified is that it is honoured,
+    not its current value.
     """
     import conteur.job as job
 
@@ -186,7 +186,7 @@ def test_only_the_head_is_transcribed(tmp_path, monkeypatch):
 
 
 def test_a_silent_opening_gets_a_second_window(tmp_path, monkeypatch):
-    """Une prise dont le début est muet garde sa chance."""
+    """A take whose beginning is silent keeps its chance."""
     import conteur.job as job
 
     monkeypatch.setattr(job, "NAMING_SAMPLE_S", 30.0)
@@ -215,8 +215,8 @@ def test_a_short_take_is_transcribed_whole(tmp_path):
 
 
 def test_the_audible_threshold_leaves_room_below_a_faint_take(tmp_path):
-    """Mesuré sur un rush réel : -51,6 dBFS RMS avec un pic à -15 dBFS, donc
-    du son bien réel, était nommé « silence » sous un seuil à -50."""
+    """Measured on a real field take: -51.6 dBFS RMS with a -15 dBFS peak, so
+    genuinely audible, was named "silence" under a -50 threshold."""
     from conteur.job import AUDIBLE_DBFS
 
     assert AUDIBLE_DBFS <= -55.0

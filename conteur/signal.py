@@ -1,4 +1,4 @@
-"""Traitement du signal. Aucune I/O."""
+"""Signal processing. No I/O."""
 
 import numpy as np
 from scipy.signal import resample_poly
@@ -12,12 +12,12 @@ DBFS_FLOOR = -120.0
 
 
 def left_channel(interleaved: np.ndarray) -> np.ndarray:
-    """Extrait le canal gauche d'un flux stéréo entrelacé."""
+    """Extract the left channel of an interleaved stereo stream."""
     return np.ascontiguousarray(interleaved[0::2])
 
 
 def crest_factor(samples: np.ndarray) -> float:
-    """Rapport crête sur RMS. ~1 pour un carré, >4 pour de la parole."""
+    """Peak-to-RMS ratio. ~1 for a square wave, >4 for speech."""
     x = samples.astype(np.float64)
     rms = float(np.sqrt(np.mean(x * x)))
     if rms == 0.0:
@@ -26,10 +26,10 @@ def crest_factor(samples: np.ndarray) -> float:
 
 
 def looks_like_timecode(samples: np.ndarray) -> bool:
-    """Vrai si le canal porte un signal binaire pleine échelle, pas de la voix."""
+    """True if the channel carries a full-scale binary signal, not a voice."""
     if samples.size == 0:
-        # Une capture vide n'est pas du timecode : c'est du silence, et
-        # `np.max` sur un tableau vide lèverait.
+        # An empty capture is not timecode: it is silence, and `np.max` over
+        # an empty array would raise.
         return False
     peak = float(np.max(np.abs(samples.astype(np.float64)))) / FULL_SCALE
     if peak < TIMECODE_MIN_PEAK:
@@ -38,13 +38,13 @@ def looks_like_timecode(samples: np.ndarray) -> bool:
 
 
 def to_whisper_input(samples: np.ndarray) -> np.ndarray:
-    """48 kHz int16 -> 16 kHz float32 dans [-1, 1]."""
+    """48 kHz int16 -> 16 kHz float32 in [-1, 1]."""
     scaled = samples.astype(np.float32) / FULL_SCALE
     return resample_poly(scaled, WHISPER_RATE, CAPTURE_RATE).astype(np.float32)
 
 
 def rms_dbfs(samples: np.ndarray) -> float:
-    """Niveau RMS en dBFS, plancher à -120 pour le silence numérique."""
+    """RMS level in dBFS, floored at -120 for digital silence."""
     if samples.size == 0:
         return DBFS_FLOOR
     x = samples.astype(np.float64) / FULL_SCALE

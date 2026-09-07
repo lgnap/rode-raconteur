@@ -27,7 +27,7 @@ def test_slugify_single_long_word_is_hard_cut():
 
 
 def _boom(_text):
-    raise AssertionError("make_title ne doit pas être appelé sous le seuil")
+    raise AssertionError("make_title must not be called below the threshold")
 
 
 def test_short_speech_uses_the_transcript_verbatim():
@@ -81,7 +81,7 @@ def test_origin_labels_are_french_for_every_internal_token():
     assert origin_label(ORIGIN_FAILED) == "échec"
     assert origin_label(ORIGIN_MANUAL) == "manuel"
 
-    # Rien d'anglais ne doit atteindre l'écran.
+    # Nothing English must reach the screen.
     for token, label in [(ORIGIN_TITLE, origin_label(ORIGIN_TITLE)),
                          (ORIGIN_KEYWORDS, origin_label(ORIGIN_KEYWORDS)),
                          (ORIGIN_TRANSCRIPT, origin_label(ORIGIN_TRANSCRIPT))]:

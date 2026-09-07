@@ -8,11 +8,12 @@ half-written proof — exactly what the lock exists to prevent.
 
 import json
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from conteur.card import Take, sha256_file
+from conteur.card import sha256_file
 
 
 @dataclass(frozen=True)
@@ -20,8 +21,22 @@ class Record:
     digest: str
     card_name: str
     size: int
-    path: Path
+    folder: Path
+    prefix: str
     imported_at: datetime
+
+
+def name_prefix(path: Path) -> str:
+    """Everything before the last `__` — the part of a name that never changes.
+
+    Naming replaces only the slug after the last `__`, and so does renaming by
+    hand (`job._target_name`), so this survives every path a file's name can
+    take. Storing it rather than the path is what lets a record find its file
+    again after it has been named: a stored path points at nothing the moment
+    the take stops being called `sans-nom`.
+    """
+    stem = path.stem
+    return stem.rsplit("__", 1)[0] if "__" in stem else stem
 
 
 def ledger_root() -> Path:
@@ -50,11 +65,20 @@ class Ledger:
             out = []
             for item in raw.get("takes", []):
                 try:
+                    folder = item.get("folder")
+                    prefix = item.get("prefix")
+                    if folder is None or prefix is None:
+                        # Written before the prefix existed. Dropping these
+                        # would silently close the lock on every card
+                        # imported earlier.
+                        old = Path(item["path"])
+                        folder, prefix = str(old.parent), name_prefix(old)
                     out.append(Record(
                         digest=item["digest"],
                         card_name=item["card_name"],
                         size=int(item["size"]),
-                        path=Path(item["path"]),
+                        folder=Path(folder),
+                        prefix=prefix,
                         imported_at=datetime.fromisoformat(item["imported_at"]),
                     ))
                 except (KeyError, TypeError, ValueError):
@@ -89,7 +113,8 @@ class Ledger:
                     "digest": r.digest,
                     "card_name": r.card_name,
                     "size": r.size,
-                    "path": str(r.path),
+                    "folder": str(r.folder),
+                    "prefix": r.prefix,
                     "imported_at": r.imported_at.isoformat(),
                 }
                 for r in self._records
@@ -100,26 +125,37 @@ class Ledger:
                         encoding="utf-8")
         temp.replace(self.path)
 
-    def erase_allowed(self, takes: list[Take], digests: dict[str, str],
-                      hasher=sha256_file) -> bool:
-        """True only when every take on the card has a verified twin on disk.
+    def locate(self, record: Record) -> Path | None:
+        """The file this record stands for, or None.
 
-        `digests` maps a card file name to the digest computed when it was
-        imported, so an unimported take has no entry and closes the lock.
-
-        The destination files are re-hashed rather than taken on trust: a file
-        you moved or deleted closes the lock again. Re-reading the device
-        instead would cost twelve minutes against eighty seconds locally, so
-        the rigorous version is nearly free.
+        Exactly one candidate, or none: two files sharing a prefix means we
+        cannot say which one the record is about, and this decides what may
+        be destroyed. A guess is not acceptable here.
         """
-        by_digest = {r.digest: r for r in self._records}
-        for take in takes:
-            digest = digests.get(take.name)
-            if digest is None or digest not in by_digest:
+        try:
+            found = sorted(record.folder.glob(f"{record.prefix}__*.wav"))
+        except OSError:
+            return None
+        return found[0] if len(found) == 1 else None
+
+    def erase_allowed(self, digests: Iterable[str], hasher=sha256_file) -> bool:
+        """True only when every digest is held and its file is still intact.
+
+        The caller passes the digests of **every** take on the card, computed
+        by reading it. There is deliberately no name-keyed map: the take
+        counter restarts at 00001 after an erase, so a name is not an
+        identity and a map built from the ledger's own names would authorise
+        erasing a card whose takes were never copied.
+
+        Files are re-hashed rather than trusted: one you moved or replaced
+        closes the lock again.
+        """
+        held = {r.digest: r for r in self._records}
+        for digest in digests:
+            record = held.get(digest)
+            if record is None:
                 return False
-            record = by_digest[digest]
-            if not record.path.exists():
-                return False
-            if hasher(record.path) != digest:
+            found = self.locate(record)
+            if found is None or hasher(found) != digest:
                 return False
         return True

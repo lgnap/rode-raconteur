@@ -450,7 +450,7 @@ def test_a_split_take_is_named_decoupee_and_not_submitted(tmp_path):
     list(intake(card, led, lambda w: tmp_path / "out", submitted.append,
                 splitter=splitter))
     assert submitted == parts
-    kept = led.records()[0].path.name
+    kept = led.locate(led.records()[0]).name
     assert kept.endswith("__decoupee.wav"), kept
     assert not is_orphan(kept)
 
@@ -468,7 +468,7 @@ def test_a_take_whose_split_fails_is_still_submitted(tmp_path):
     list(intake(card, led, lambda w: tmp_path / "out", submitted.append,
                 splitter=splitter))
     assert len(submitted) == 1
-    assert submitted[0] == led.records()[0].path
+    assert submitted[0] == led.locate(led.records()[0])
 
 
 def test_a_take_without_markers_is_submitted_as_before(tmp_path):

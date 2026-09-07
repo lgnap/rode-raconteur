@@ -15,7 +15,7 @@ from pathlib import Path
 from conteur.bwf import chunks, cue_points, started_at
 from conteur.bwf import split as split_at_markers
 from conteur.card import VerificationError, copy_verified
-from conteur.ledger import Ledger, Record
+from conteur.ledger import Ledger, Record, name_prefix
 from conteur.naming import SPLIT, UNNAMED
 from conteur.paths import unique_path
 from conteur.signal import CAPTURE_RATE
@@ -173,7 +173,8 @@ def intake(card, ledger: Ledger, dest_for: Callable[[datetime], Path], submit,
             continue
 
         ledger.add(Record(digest=digest, card_name=take.name, size=take.size,
-                          path=final, imported_at=datetime.now()))
+                          folder=final.parent, prefix=name_prefix(final),
+                          imported_at=datetime.now()))
         yield Event("recorded", take=take.name, detail=str(final))
 
         # The parts land in the take's own folder, not in a subfolder of their

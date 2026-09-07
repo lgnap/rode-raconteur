@@ -138,3 +138,61 @@ help; the replug is part of the procedure.
 The storage is read-only at the device level (`/sys/block/*/ro = 1`), so this
 is the only way to erase. Copy and verify your recordings first — this is
 irreversible and there is no confirmation prompt.
+
+---
+
+# The full HID report descriptor
+
+Read from sysfs on a Wireless PRO TX (`0x0056`, firmware 2.0.8), which needs no
+privileges and sends nothing to the device:
+
+```sh
+xxd "$(readlink -f /sys/class/hidraw/hidraw0/device)/report_descriptor"
+```
+
+136 bytes, one application collection, everything on vendor usage page `ff00`.
+Fifteen reports, all fixed-size:
+
+| ID | Direction | Total bytes | ID | Direction | Total bytes |
+|---|---|---|---|---|---|
+| `01` | OUT | 17 | `02` | IN | 17 |
+| `03` | OUT | 17 | `04` | IN | 13 |
+| `05` | OUT | **1073** | `06` | IN | 61 |
+| `07` | OUT | **1537** | `08` | IN | 9 |
+| `09` | OUT | 37 | `0a` | IN | 37 |
+| `0d` | OUT | 64 | `0b` | IN | 61 |
+| `0f` | OUT | 64 | `0e` | IN | 64 |
+| | | | `10` | IN | 64 |
+
+Three things follow from this that were previously only guesses.
+
+**"Reply = request + 1" is structural.** Every OUT report `n` has an IN report
+`n+1`: 1/2, 3/4, 5/6, 7/8, 9/0a, 0d/0e, 0f/10. It is not a pattern inferred
+from a handful of exchanges, it is how the device describes itself. The observed
+sizes match exactly — the 17-byte command family, the 37-byte polling family,
+and the 64-byte family.
+
+**Report `0b` is input-only.** No output report corresponds to it, so it is an
+**unsolicited** channel: the device talking on its own initiative. Worth
+listening to during an erase — it is a plausible home for the completion
+notice that currently has to be inferred from a re-enumeration.
+
+**There is no OUT endpoint.** The HID interface declares a single IN interrupt
+endpoint (`0x83`, 64 bytes). A `write()` to `/dev/hidrawN` therefore does not go
+to an endpoint at all: the kernel turns it into a `SET_REPORT` on the control
+pipe. It works — that is how the erase command is delivered — but a failure will
+surface as a control-transfer error, not a bulk one.
+
+The two large output buffers, 1073 and 1537 bytes, have no useful IN
+counterpart. They are almost certainly firmware upload. Leave them alone.
+
+## Interfaces, connected directly
+
+```
+19f7:0056  RØDE Wireless PRO TX   serial=800AF63E   USB 2.0, 480M, 300 mA
+├─ If 0  class 03/00/00  HID           usbhid       ep 83  IN  interrupt  64 B
+└─ If 1  class 08/06/50  Mass Storage  usb-storage  ep 02 OUT / ep 81 IN  bulk
+```
+
+`08/06/50` is SCSI transparent command set, Bulk-Only transport — ordinary mass
+storage, no vendor quirk on that side.

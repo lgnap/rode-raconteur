@@ -6,10 +6,14 @@ fichier BWF, qui est le format WAV standard. Presque aucun lecteur ne l'affiche,
 si bien qu'ils semblent n'exister que dans RODE Central.
 
 Cet outil les lit, découpe le fichier à chaque marqueur et **garde tout** : rien
-n'est jeté, donc recoller les morceaux rend l'original à l'octet près. C'est
+n'est jeté, donc recoller les morceaux rend l'audio à l'octet près. C'est
 voulu — un marqueur peut signaler un début, une fin, ou juste un passage à
 réécouter, et l'outil n'a aucun moyen de le savoir. Une césure sans objet doit
 pouvoir être annulée.
+
+Limite connue : le recollage restitue le chunk `data` à l'identique, mais pas
+l'en-tête complet. Les chunks `cue ` et `PAD ` ne sont pas reconstruits, donc un
+fichier recollé a perdu ses marqueurs et ne peut plus être redécoupé.
 
 L'audio n'est jamais réencodé : les octets du chunk `data` sont recopiés tels
 quels. L'horodatage BWF de chaque morceau est décalé pour rester juste.

@@ -1,16 +1,24 @@
-# RØDE on Linux
+# rode-raconteur
 
-Getting RØDE gear working on Linux — including **RODE Central itself**, running
-under Wine.
+RØDE gear on Linux — and a recorder that names its own takes.
 
-Most of what breaks is not audio. RØDE devices are configured over a
-vendor-specific **HID** channel, and that channel is closed to your user by
-default. Fix that and a lot of things start working at once.
+This started as an attempt to make **RODE Central** itself work under Wine. It
+mostly does, and the parts that do not turned out to be worth writing down. Along
+the way the hardware had to be understood well enough that a small native
+recorder became the better tool for everyday use. Four things live here:
+
+| | |
+|---|---|
+| **1. RODE Central under Wine** | How far it gets, what unlocks it, and the one thing that genuinely does not work — [docs/rode-central-wine.md](docs/rode-central-wine.md) |
+| **2. How the Wireless PRO works** | Interfaces, HID reports, onboard recordings, markers, throughput — [docs/device-map.md](docs/device-map.md) and [docs/wireless-pro-hid-observations.md](docs/wireless-pro-hid-observations.md) |
+| **3. Erasing recordings with krode** | What that binary is, why it has to exist, and what we sent upstream — [docs/krode.md](docs/krode.md) |
+| **4. `conteur`, a recorder** | Records from the receiver and names each take from what is said in it — [below](#conteur--a-recorder-that-names-its-own-takes) |
 
 > **Scope, honestly.** Everything here was verified on **one machine** (Fedora 44,
-> kernel 7.1.12, KDE 6/Wayland) with **one device** (Wireless PRO, firmware
-> 1.0.2). The HID access part should apply to any RØDE device; the audio and
-> device-map parts are model-specific. Corrections and additions welcome — see
+> kernel 7.1.12, KDE 6/Wayland) with **one kit**: a Wireless PRO receiver, two
+> transmitters and a Charge Case+, on firmware 1.0.2 through 2.0.8. The HID access
+> part should apply to any RØDE device; the audio, device-map and recording
+> formats are model-specific. Corrections and additions welcome — see
 > [CONTRIBUTING.md](CONTRIBUTING.md), it takes one command.
 
 ## Start here
@@ -138,11 +146,89 @@ Each source gets a folder of numbered parts, named with their time range:
 
 **Nothing is discarded and nothing is re-encoded.** The audio bytes are copied
 verbatim and every part of the recording is kept, so `./rejoindre.sh` reconstructs
-the original byte for byte — verified on real files. That matters because a marker
-may mean a start, an end, or just a passage worth revisiting, and the tool has no
-way to tell: a cut that turns out to be pointless has to be undoable.
+the audio byte for byte — verified on real files, including one cut at 34 markers
+into 35 parts. That matters because a marker may mean a start, an end, or just a
+passage worth revisiting, and the tool has no way to tell: a cut that turns out to
+be pointless has to be undoable.
+
+**Known limitation.** Rejoining restores the `data` chunk identically but not the
+whole header: the `cue ` and `PAD ` chunks are not rebuilt. A rejoined file has
+lost its markers and cannot be split again. Keep the original if you may want to
+re-cut it.
 
 Each part's BWF timestamp is shifted by its offset, so timecode stays correct.
+
+## `conteur` — a recorder that names its own takes
+
+The reason this exists: recording a two-minute idea should not mean opening
+Audacity, picking the right input, arming a track, and then inventing a filename.
+
+```sh
+python -m conteur
+```
+
+One window. It watches for the Wireless PRO receiver, records when you press the
+button, and then **works out what to call the take from what was said in it**.
+
+```
+2026-09-06_143208_chaine-hifi-et-baffle.wav      · titre généré
+2026-09-06_150411_silence.wav                    · silence
+2026-09-06_151002_timecode.wav                   · canal timecode
+```
+
+**How the naming works.** The take is transcribed locally with
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) (`large-v3`), and a
+local [Ollama](https://ollama.com) model (`qwen3:8b`) turns the transcript into a
+short title. Nothing leaves the machine. When there is too little speech to
+title, the name falls back to keywords; when there is none, the file is labelled
+`silence`, `sans-parole` or `timecode` rather than given a made-up name. Every
+row shows *where* its name came from, so a wrong one is obvious at a glance.
+
+Files land in `<Music>/Enregistrements/<YYYY-MM>/`. Double-click a row to rename
+it yourself.
+
+**What it takes care of, because these all happened:**
+
+- **The receiver is only sometimes there.** The device list is re-scanned while
+  the window is open, so plugging the receiver in after launch works.
+- **Unplugging mid-take does not lose the take.** The fragment is written and
+  marked `incomplet`.
+- **A take is never lost to a failed naming.** The WAV is written before
+  transcription is attempted, under a provisional name, and takes left unnamed by
+  a crash are picked up again at the next launch.
+- **One job at a time.** Whisper and the titling model do not fit in 8 GB of VRAM
+  together, so naming is serialised through a single-slot queue.
+- **Ctrl+C actually quits**, and a take in progress is written on the way out.
+
+Requires Python 3.12+, PySide6, PyAudio, faster-whisper, and a running Ollama.
+Tests: `python -m pytest` (172 tests, no hardware needed).
+
+### Naming files you already have
+
+`conteur` names what it records. For files that already exist — takes copied off
+a transmitter, or parts cut at markers — the same recognition is available from
+the command line:
+
+```sh
+./tools/nommer-morceaux.py ~/decoupe/00009_Name/
+```
+
+It **appends** the slug rather than replacing the name, so cut parts keep the
+numbering that says what belonged together. The decision comes from the same
+shared code as the application, not a copy of it.
+
+## Deleting onboard recordings
+
+The storage a transmitter exposes is **read-only at the device level**, so a full
+card cannot be emptied through the filesystem. The vendor HID command that does
+it is implemented by [krode](https://github.com/LinuxRenaissance/krode).
+
+What that binary is, why it is necessary, the percentage-not-status-code finding
+and the erase-completion fix we sent upstream: **[docs/krode.md](docs/krode.md)**
+
+Copy and verify your recordings before erasing. It is irreversible, there is no
+confirmation prompt, and reading the card is **four times faster through the
+charging case** than from a transmitter connected directly.
 
 ## Prior art
 

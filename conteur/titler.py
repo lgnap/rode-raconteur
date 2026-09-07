@@ -32,7 +32,10 @@ def keywords(text: str, n: int = 3) -> list[str]:
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen3:8b"
-TIMEOUT_S = 20.0
+# Mesuré : 30 s au premier appel, le temps qu'Ollama charge qwen3:8b en VRAM,
+# puis 0,7 s à chaud. Un délai de 20 s faisait donc systématiquement basculer le
+# premier titre de chaque session sur le repli mots-clés.
+TIMEOUT_S = 60.0
 MAX_TITLE_LEN = 120
 
 PROMPT = (
@@ -64,6 +67,12 @@ def title_from_ollama(text: str, post=None, timeout_s: float = TIMEOUT_S) -> str
                 "prompt": PROMPT + text,
                 "stream": False,
                 "think": False,
+                # Rend la VRAM immédiatement : mesuré, Whisper occupe 2033 Mio
+                # et qwen3:8b 5470 sur 8192. Les deux tiennent au repos, mais
+                # les 690 Mio restants ne suffisent pas à l'espace de travail
+                # d'une transcription de plusieurs minutes — d'où des
+                # « CUDA out of memory » en série.
+                "keep_alive": 0,
             },
             timeout=timeout_s,
         )

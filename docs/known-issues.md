@@ -33,6 +33,32 @@ ne disait pas.
 
 L'audio est conservé dans les deux cas ; seule l'étiquette change.
 
+## VRAM : les deux modèles ne cohabitent pas pendant une transcription
+
+Mesuré sur la RTX 2080 Super (8 192 Mio) :
+
+```
+bureau (kwin)          88 Mio
+Whisper large-v3    2 033 Mio
+qwen3:8b            5 470 Mio
+                   ──────────
+                    7 591 Mio   →  601 Mio pour tout le reste
+```
+
+Les deux tiennent au repos, mais l'espace de travail d'une transcription de
+plusieurs minutes dépasse largement ces 600 Mio : une tentative de préchauffer le
+modèle de titrage au démarrage a produit des `CUDA out of memory` en série et zéro
+fichier traité.
+
+Chaque requête de titrage porte donc `keep_alive: 0` : Ollama rend sa VRAM dès la
+réponse produite. Le coût est un démarrage à froid par titre, environ 30 secondes,
+absorbé par le délai de garde de 60 s. Indolore sur la file d'arrière-plan, sensible
+sur un traitement par lot — compter une vingtaine de minutes supplémentaires pour
+une cinquantaine de fichiers.
+
+Si cela devenait gênant, faire tourner le titrage sur le processeur supprimerait la
+contention au prix d'un titrage plus lent.
+
 ## Bibliothèques CUDA et repli CPU
 
 Sur cette machine, CUDA vient des paquets pip `nvidia-cublas-cu12` et

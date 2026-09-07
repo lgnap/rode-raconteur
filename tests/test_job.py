@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import numpy as np
+import pytest
 
 from conteur.job import name_recording, rename_take
 from conteur.recorder import write_wav
@@ -146,3 +147,76 @@ def test_empty_capture_is_named_silence_not_failed(tmp_path):
     assert result.origin == "silence"
     assert result.path.exists()
     assert result.path.name == "2026-09-06_143208_silence.wav"
+
+
+# --- on n'écoute que le début pour nommer ---
+
+
+class RecordingModel:
+    """Doublure qui note la durée de ce qu'on lui donne à transcrire."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.durations = []
+
+    def transcribe(self, audio, **kwargs):
+        self.durations.append(len(audio) / 16000)
+        segs = self.replies.pop(0) if self.replies else []
+        return iter(segs), object()
+
+
+def test_only_the_head_is_transcribed(tmp_path, monkeypatch):
+    """Transcrire une heure d'audio pour produire trois mots est un gâchis.
+
+    Le plafond est réduit dans le test : ce qui est vérifié, c'est qu'il est
+    respecté, pas sa valeur du moment.
+    """
+    import conteur.job as job
+
+    monkeypatch.setattr(job, "NAMING_SAMPLE_S", 30.0)
+    long_take = np.zeros(48000 * 120, dtype=np.int16)      # 2 minutes
+    long_take[::7] = 8000                                  # sonore
+    path = _wav(tmp_path, long_take)
+    model = RecordingModel([[Seg(0.0, 20.0, "Il etait une fois")]])
+
+    name_recording(path, WHEN, model, title_fn=lambda t: ("La licorne", "title"))
+
+    assert len(model.durations) == 1
+    assert model.durations[0] == pytest.approx(30.0, abs=1.0)
+
+
+def test_a_silent_opening_gets_a_second_window(tmp_path, monkeypatch):
+    """Une prise dont le début est muet garde sa chance."""
+    import conteur.job as job
+
+    monkeypatch.setattr(job, "NAMING_SAMPLE_S", 30.0)
+    long_take = np.zeros(48000 * 120, dtype=np.int16)
+    long_take[::7] = 8000
+    path = _wav(tmp_path, long_take)
+    model = RecordingModel([[], [Seg(0.0, 4.0, "Bonjour")]])
+
+    result = name_recording(path, WHEN, model, title_fn=lambda t: ("x", "title"))
+
+    assert len(model.durations) == 2
+    assert result.slug == "bonjour"
+
+
+def test_a_short_take_is_transcribed_whole(tmp_path):
+    import numpy as np
+
+    short = np.zeros(48000 * 5, dtype=np.int16)
+    short[::7] = 8000
+    path = _wav(tmp_path, short)
+    model = RecordingModel([[Seg(0.0, 4.0, "Bonjour")]])
+
+    name_recording(path, WHEN, model, title_fn=lambda t: ("x", "title"))
+
+    assert model.durations[0] == pytest.approx(5.0, abs=0.5)
+
+
+def test_the_audible_threshold_leaves_room_below_a_faint_take(tmp_path):
+    """Mesuré sur un rush réel : -51,6 dBFS RMS avec un pic à -15 dBFS, donc
+    du son bien réel, était nommé « silence » sous un seuil à -50."""
+    from conteur.job import AUDIBLE_DBFS
+
+    assert AUDIBLE_DBFS <= -55.0

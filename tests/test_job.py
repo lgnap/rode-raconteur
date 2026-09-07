@@ -253,3 +253,28 @@ def test_naming_a_take_recorded_here_is_unchanged(tmp_path):
     result = name_recording(path, WHEN, model,
                             title_fn=lambda t: ("jamais", "title"))
     assert result.path.name == "2026-09-06_143208_la-licorne.wav"
+
+
+# --- renaming by hand must not destroy what the name carries ---
+
+
+def test_a_manual_rename_keeps_the_card_name_and_the_part_rank(tmp_path):
+    """The rank is the only thing linking a part to its siblings, and
+    rejoining them is a supported operation. Named automatically the rank
+    survives; named by hand it used to vanish, so which shape you ended up
+    with depended on which path had run.
+    """
+    path = tmp_path / "2026-09-07_111225_00002_Source-Baffle_02_sur_06__la-licorne.wav"
+    path.write_bytes(b"")
+    target = rename_take(path, "Le cheval", datetime(2026, 9, 7, 11, 12, 25))
+    assert target.name == \
+        "2026-09-07_111225_00002_Source-Baffle_02_sur_06__le-cheval.wav"
+
+
+def test_a_manual_rename_of_a_recorded_take_is_unchanged(tmp_path):
+    """A take recorded here carries no card name, so it is rebuilt from its
+    timestamp exactly as before."""
+    path = tmp_path / "2026-09-07_111225_la-licorne.wav"
+    path.write_bytes(b"")
+    target = rename_take(path, "Le cheval", datetime(2026, 9, 7, 11, 12, 25))
+    assert target.name == "2026-09-07_111225_le-cheval.wav"

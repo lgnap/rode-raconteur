@@ -52,19 +52,33 @@ def _read_wav(path: Path) -> np.ndarray:
     return read_samples(path, max_frames=budget)
 
 
+def _target_name(path: Path, when: datetime, slug: str,
+                 replace_named: bool = False) -> str:
+    """The file name a take takes on when it is given `slug`.
+
+    Everything before the last `__` is the name the card carried and, for a
+    part, its rank. Decision 8 keeps both deliberately: the card name will not
+    be reproducible — the take counter restarts at 00001 after an erase — and
+    the rank is the only thing linking a part to its siblings, which rejoining
+    them depends on. A take recorded here has no such segment and is rebuilt
+    from its timestamp.
+
+    `replace_named` is what separates the two callers. Automatic naming only
+    ever replaces a placeholder, so it leaves an already-named file alone.
+    Renaming by hand replaces whatever tail is there — the user is choosing
+    the title — but must keep the prefix all the same, or correcting one
+    part's title would silently break the group.
+    """
+    stem = path.stem
+    if "__" in stem:
+        head, tail = stem.rsplit("__", 1)
+        if replace_named or is_placeholder(tail):
+            return f"{head}__{slug}{path.suffix}"
+    return build_name(when, slug)
+
+
 def _renamed(wav_path: Path, when: datetime, slug: str, origin: str) -> NameResult:
-    stem = wav_path.stem
-    if "__" in stem and is_placeholder(stem.rsplit("__", 1)[1]):
-        # An imported take, or a part cut from one: everything before the
-        # last `__` is the name the card carried and the part's rank, which
-        # decision 8 keeps deliberately because it will not be reproducible —
-        # the take counter restarts at 00001 after an erase. Only the
-        # placeholder tail is replaced. A take recorded here has no such
-        # segment and is rebuilt from its timestamp, exactly as before.
-        name = f"{stem.rsplit('__', 1)[0]}__{slug}{wav_path.suffix}"
-    else:
-        name = build_name(when, slug)
-    target = unique_path(wav_path.parent, name)
+    target = unique_path(wav_path.parent, _target_name(wav_path, when, slug))
     wav_path.rename(target)
     return NameResult(path=target, slug=slug, origin=origin)
 
@@ -143,6 +157,7 @@ def rename_take(path: Path, new_text: str, when: datetime) -> Path:
     slug = slugify(new_text)
     if not slug:
         return path
-    target = unique_path(path.parent, build_name(when, slug))
+    target = unique_path(path.parent,
+                         _target_name(path, when, slug, replace_named=True))
     path.rename(target)
     return target

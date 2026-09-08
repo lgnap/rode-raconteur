@@ -12,7 +12,7 @@ recorder became the better tool for everyday use. Four things live here:
 | **1. RODE Central under Wine** | How far it gets, what unlocks it, and the one thing that genuinely does not work — [docs/rode-central-wine.md](docs/rode-central-wine.md), with a Wine bug report [still to file](docs/upstream/) |
 | **2. How the Wireless PRO works** | Interfaces, HID reports, onboard recordings, markers, throughput — [docs/device-map.md](docs/device-map.md) and [docs/wireless-pro-hid-observations.md](docs/wireless-pro-hid-observations.md) |
 | **3. Erasing recordings with krode** | What that binary is, why it has to exist, and what we sent upstream — [docs/krode.md](docs/krode.md) |
-| **4. `conteur`, a recorder** | Records from the receiver and names each take from what is said in it — [below](#conteur--a-recorder-that-names-its-own-takes) |
+| **4. `conteur`, a recorder** | Records from the receiver and names each take from what is said in it; also recovers the transmitters' onboard recordings and erases a card once every take on it is copied and verified — [below](#conteur--a-recorder-that-names-its-own-takes) |
 
 > **Scope, honestly.** Everything here was verified on **one machine** (Fedora 44,
 > kernel 7.1.12, KDE 6/Wayland) with **one kit**: a Wireless PRO receiver, two
@@ -217,6 +217,49 @@ It **appends** the slug rather than replacing the name, so cut parts keep the
 numbering that says what belonged together. The decision comes from the same
 shared code as the application, not a copy of it.
 
+### Recovering a transmitter's card, and erasing it
+
+**Récupérer** copies what the transmitters recorded onto the machine. Nothing is
+mounted: the card is read from `/dev/sdX` as a FAT32 volume, which is what makes
+the volume UUID available — it is the only per-transmitter identifier that holds
+both through the charging case and on a transmitter connected directly, and it
+equals that transmitter's `HID_UNIQ`. Files land beside the recorded ones, in
+`<Music>/Enregistrements/<YYYY-MM>/`, and are named the same way.
+
+Every copy is verified by digest, and what was verified is written to a ledger,
+one JSON file per card in `~/.local/share/conteur/imports/<volume-uuid>.json`.
+Importing the same card twice copies nothing twice. A take still being recorded —
+the zero-byte entry a transmitter always shows, because it starts recording the
+instant it leaves the case — is skipped rather than copied empty.
+
+**The ledger is what unlocks erasing.** A card is offered an erase button only
+when it holds nothing that is not already copied and verified, and there is one
+button per card, never one that erases everything. Pressing it re-inventories the
+card and re-hashes every local copy before sending anything, which is the slow
+part: around 80 s for 30 GB, against 1.2–1.8 s for the command itself. It refuses,
+rather than erasing, when
+
+- the card changed since the import — a transmitter that left the case for a
+  second has already recorded something nobody has copied;
+- a recording is in progress on it;
+- one of the local copies is missing or no longer matches its digest;
+- the HID node stopped matching that card, which a re-dock during the hashing
+  is enough to cause.
+
+The command is the vendor HID one described below. After it, the transmitter
+re-enumerates, so the card is **not** readable again straight away — the erase is
+recorded in the ledger with the number of takes it covered and, normally, no
+count of what is left, because nothing could be read back. Erasing two cards in a
+row works: the device list is resolved again between them, as the first erase
+invalidates it. The take counter on the card restarts at `00001`.
+
+Verified on 2026-09-08 with two transmitters: five erases, including two in a
+row; the first and third refusals above; the counter restarting; and a re-import
+that copied the new takes rather than reporting them as already held. The other
+two refusals are exercised by the test suite only — a card that starts recording
+between the import and the click, and a re-dock that moves the HID node during
+the hashing, are both hard to produce on purpose.
+
 ## Deleting onboard recordings
 
 The storage a transmitter exposes is **read-only at the device level**, so a full
@@ -225,6 +268,11 @@ it is implemented by [krode](https://github.com/LinuxRenaissance/krode).
 
 What that binary is, why it is necessary, the percentage-not-status-code finding
 and the erase-completion fix we sent upstream: **[docs/krode.md](docs/krode.md)**
+
+`conteur` sends that same command itself, from those findings, but only for a
+card whose every take it has copied and verified — see
+[above](#recovering-a-transmitters-card-and-erasing-it). Reach for the binary
+when you want to erase a card without importing it first.
 
 Copy and verify your recordings before erasing. It is irreversible and there is
 no confirmation prompt. Read the cards through the charging case over a

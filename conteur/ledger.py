@@ -43,6 +43,12 @@ class Erasure:
     outcome of "unknown" — the transmitter said nothing and the state is
     undetermined — or a card that could not be re-read, which is the normal
     end of an erase rather than a failure.
+
+    In practice it is always None: a transmitter that has just been erased is
+    re-enumerating, and the read fails. Expect the pair "erased, remaining
+    unknown", and read a count here as the exception. The field earns its keep
+    by not being a number that was never measured — an earlier version reported
+    one, and it was the card as it stood before the erase.
     """
 
     at: datetime

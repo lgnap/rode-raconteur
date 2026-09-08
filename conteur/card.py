@@ -12,6 +12,7 @@ nothing writes.
 """
 
 import hashlib
+import os
 import struct
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -94,8 +95,19 @@ class Card:
         the length of one import. It is wrong across an erase, and wrong for
         the freshness check that asks whether the card changed since the
         import: both need the table on the card, not the one from before.
+
+        Our own cache is only half of it. The reads that follow go back
+        through the same descriptor, and the kernel answers them from the
+        pages it cached for this block device. An erase travels over HID, so
+        nothing on the block side tells the kernel those pages are now a
+        description of a card that no longer exists — and the re-inventory
+        comes back with the card as it was, which is the one answer this
+        method exists to prevent. POSIX_FADV_DONTNEED drops them; they are
+        read-only and therefore clean, so the kernel has nothing to write back
+        and nothing to refuse.
         """
         self._fat = None
+        os.posix_fadvise(self.fh.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
 
     @property
     def serial(self) -> str:

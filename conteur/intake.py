@@ -427,10 +427,17 @@ def erase_card(card, ledger: Ledger, verdict: CardVerdict, node,
     result = eraser(node)
     if result.verdict in (SUCCESS, REENUMERATED):
         yield Event("erased", detail=verdict.serial)
-        # Assert nothing: the card comes back readable straight away, so the
-        # cheapest honest thing to do is look. A card that cannot be re-read
-        # is not a failure — a transmitter mid-reenumeration is the normal
-        # end of an erase — so the count is simply reported as unknown.
+        # Assert nothing: look, and report what the look finds. On hardware it
+        # finds nothing — the transmitter is re-enumerating, the read fails,
+        # and `remaining` is None after every real erase (measured on two
+        # cards, 2026-09-08). This said the opposite until then, on the
+        # evidence of a re-read that came back with a count: the card does not
+        # come back readable straight away, it only looked that way because
+        # the kernel still held the pages from before. The erase travels over
+        # HID and invalidates nothing on the block side, so what was read back
+        # was the card as it was — the one answer the re-read exists to avoid.
+        # A card that cannot be re-read is not a failure: mid-reenumeration is
+        # the normal end of an erase, so the count is reported as unknown.
         try:
             remaining = len(_fresh_takes(card))
         except (OSError, ValueError, struct.error):

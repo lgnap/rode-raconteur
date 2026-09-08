@@ -38,7 +38,8 @@ def looks_like_timecode(samples: np.ndarray) -> bool:
 
 
 def startup_burst(samples: np.ndarray, rate: int = CAPTURE_RATE,
-                  window_ms: int = 10, max_ms: int = 300) -> int:
+                  window_ms: int = 10, max_ms: int = 300,
+                  floor: float = 0.1) -> int:
     """How many frames of power-on transient a take opens with, 0 if none.
 
     A transmitter starts recording the instant it leaves the charging case,
@@ -69,17 +70,26 @@ def startup_burst(samples: np.ndarray, rate: int = CAPTURE_RATE,
     if peak_of(opening) <= TIMECODE_MIN_PEAK or crest_factor(opening) >= CREST_SQUARE_MAX:
         return 0
 
-    # The signature is read once, at the opening; the extent is then the last
-    # window still at full scale. Requiring every window to be square ended
-    # the measurement at the first dip — and the real transient dips around
-    # 10-20 ms before saturating again, so that reported 10 ms of a 100 ms
-    # burst and left the rest of it in the file.
-    last = frames = 0
+    # The signature is read once, at the opening; the extent then runs until
+    # the level falls back to what the take itself sounds like. Two earlier
+    # rules were wrong on hardware, both by stopping too soon:
+    #
+    #   - "while every window is square" ended at the first dip, and the real
+    #     transient dips around 10-20 ms before saturating again — it reported
+    #     10 ms of a 100 ms burst;
+    #   - "the last window above half full scale" ended while the transient was
+    #     still decaying — 1.00, 0.95, 0.65, then 0.41 — leaving that 0.41
+    #     block in the file, right after the silence, audible as a click.
+    #
+    # The floor is what separates the transient's decay from the recording:
+    # measured, the tail reaches the take's own level (0.02-0.08 of full scale)
+    # within about 100 ms, so a tenth of full scale sits between the two.
+    frames = 0
     while frames + window <= limit:
-        if peak_of(samples[frames:frames + window]) > TIMECODE_MIN_PEAK:
-            last = frames + window
+        if peak_of(samples[frames:frames + window]) < floor:
+            return frames
         frames += window
-    return 0 if last >= limit else last
+    return 0
 
 
 def to_whisper_input(samples: np.ndarray) -> np.ndarray:

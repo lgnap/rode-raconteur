@@ -125,6 +125,25 @@ def test_startup_burst_spans_a_dip_inside_the_transient():
     assert startup_burst(samples, rate=48000) == 4800
 
 
+def _block(frames, amp, period=50):
+    t = np.arange(frames)
+    return (np.where((t // (period // 2)) % 2 == 0, amp, -amp) * 32767).astype(np.int16)
+
+
+def test_startup_burst_covers_the_decay_not_just_the_saturated_part():
+    """The transient does not stop, it decays: measured on hardware, 1.00 then
+    0.95, 0.65, 0.41, and only then the 0.08 of the take itself. Ending at the
+    last window above half full scale left the 0.41 block in the file, right
+    after the silence — which is audible, and is the click this removes."""
+    samples = np.concatenate([
+        _block(2880, 1.00),     #  0- 60 ms, saturated
+        _block(480, 0.65),      # 60- 70 ms, decaying
+        _block(960, 0.41),      # 70- 90 ms, still far above the take
+        _quiet(48000, amp=600), # the take: peak well under a tenth of full scale
+    ])
+    assert startup_burst(samples, rate=48000) == 4320
+
+
 def test_startup_burst_is_zero_when_the_take_opens_normally():
     """Takes rolled over mid-session open at speaking level and must be left
     alone — silencing their first 100 ms would remove speech."""

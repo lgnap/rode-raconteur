@@ -3,7 +3,7 @@ import pytest
 import numpy as np
 from conteur.signal import (
     left_channel, crest_factor, looks_like_timecode, to_whisper_input,
-    rms_dbfs,
+    rms_dbfs, startup_burst,
 )
 
 
@@ -86,3 +86,53 @@ def test_empty_capture_is_not_timecode():
     # An empty take must end up as "silence", not an error: `np.max` on an
     # empty array would raise ValueError.
     assert looks_like_timecode(np.zeros(0, dtype=np.int16)) is False
+
+
+# --- startup_burst: the transmitter's power-on transient ------------------
+#
+# A take recorded on a transmitter's own card opens with a block of full-scale
+# square wave when the take is the first one after it left the charging case:
+# the recording starts before the microphone chain has settled. Measured on
+# eleven takes recorded weeks apart, the block is 90-110 ms long, sits at
+# 1.00 of full scale and has a crest factor of 1.13 every single time, where
+# the quietest ordinary take measures 2.84 — a margin wide enough that the
+# threshold is not a tuning knob.
+
+
+def _quiet(n, amp=300, seed=0):
+    return (np.random.default_rng(seed).normal(0, amp, n)).astype(np.int16)
+
+
+def test_startup_burst_measures_a_saturated_opening():
+    """The whole point: how long the transient lasts, not whether it is there.
+
+    A fixed length would eat the start of the takes that do not have one."""
+    samples = np.concatenate([_square(4800, amp=32767), _quiet(48000)])
+    assert startup_burst(samples, rate=48000) == 4800
+
+
+def test_startup_burst_spans_a_dip_inside_the_transient():
+    """The real transient is not uniformly square: measured on hardware, it
+    saturates, dips around 10-20 ms, saturates again, then falls away. Ending
+    the measurement at the first window that is not square reported 10 ms for
+    a transient that lasts 100, which is the whole burst left in the file."""
+    samples = np.concatenate([
+        _square(2400, amp=32767),           # 0-50 ms, saturated
+        _quiet(480, amp=8000, seed=1),      # 50-60 ms, the dip
+        _square(1920, amp=32767),           # 60-100 ms, saturated again
+        _quiet(48000),                      # the take itself
+    ])
+    assert startup_burst(samples, rate=48000) == 4800
+
+
+def test_startup_burst_is_zero_when_the_take_opens_normally():
+    """Takes rolled over mid-session open at speaking level and must be left
+    alone — silencing their first 100 ms would remove speech."""
+    assert startup_burst(_quiet(48000, amp=3000), rate=48000) == 0
+
+
+def test_startup_burst_refuses_a_block_longer_than_the_artifact():
+    """A whole file of full-scale square is a timecode channel, not this
+    defect. Past the cap the answer is "not this", not "silence all of it"."""
+    samples = np.concatenate([_square(24000, amp=32767), _quiet(48000)])
+    assert startup_burst(samples, rate=48000, max_ms=300) == 0

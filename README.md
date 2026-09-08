@@ -131,7 +131,7 @@ Markers set on a transmitter are stored in the file's standard `cue ` chunk, whi
 most software silently ignores. To cut a recording at them:
 
 ```sh
-./tools/decouper-marqueurs.py /path/to/00009_Name.WAV --sortie ~/decoupe
+./tools/split-at-markers.py /path/to/00009_Name.WAV --out ~/parts
 ```
 
 Each source gets a folder of numbered parts, named with their time range:
@@ -210,12 +210,39 @@ a transmitter, or parts cut at markers — the same recognition is available fro
 the command line:
 
 ```sh
-./tools/nommer-morceaux.py ~/decoupe/00009_Name/
+./tools/name-parts.py ~/parts/00009_Name/
 ```
 
 It **appends** the slug rather than replacing the name, so cut parts keep the
 numbering that says what belonged together. The decision comes from the same
 shared code as the application, not a copy of it.
+
+### The click at the start of a take
+
+A transmitter starts recording **the instant it leaves the charging case**,
+before its microphone chain has settled, so the first take of an outing opens
+with a block of full-scale square wave — 90 to 110 ms of it, at 1.00 of full
+scale, with a crest factor of 1.13 every time. The quietest ordinary take
+measures 2.84, so the two populations do not overlap and the threshold is not a
+tuning knob.
+
+```sh
+./tools/mute-startup.py ~/Music/Enregistrements/2026-09      # report only
+./tools/mute-startup.py --out ~/cleaned <files>              # copies, originals intact
+./tools/mute-startup.py --replace <files>                    # in place
+```
+
+It **measures** the transient per file rather than trimming a fixed length:
+takes that do not have one open at speaking level — a recording rolled over
+when it reached the file size limit starts mid-sentence — and a blind trim
+would cut their first words. The last 5 ms are ramped rather than cut, because
+stepping straight back to full audio is itself a click. Only the `data` chunk
+is written to, so `bext` keeps the timestamp, `cue` keeps the markers, and the
+file can still be split afterwards.
+
+`--replace` refuses a file a ledger still vouches for: patching the audio
+changes its digest, and that digest is what authorises erasing the card it came
+from. Clean after the erase, not between the import and it.
 
 ### Recovering a transmitter's card, and erasing it
 

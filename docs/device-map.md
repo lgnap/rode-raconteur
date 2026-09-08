@@ -99,7 +99,7 @@ points, so they only appear to exist inside RØDE's own software.
 The zero-filled `PAD ` chunk is why: the device reserves room so it can write cue
 points in place afterwards, without rewriting a multi-megabyte file.
 
-`tools/decouper-marqueurs.py` reads them, and can split a recording at its markers
+`tools/split-at-markers.py` reads them, and can split a recording at its markers
 without re-encoding — see the README.
 
 **Firmware quirk:** `BWF_ORIGINATION_DATE` is written as `0026-08-25` rather than

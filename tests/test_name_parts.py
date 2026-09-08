@@ -1,16 +1,16 @@
-"""L'outil de nommage par lot — ce que la suite de l'application ne couvre pas."""
+"""The batch naming tool — what the application's own suite does not cover."""
 
 import importlib.util
 from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parent.parent / "tools" / "nommer-morceaux.py"
+SCRIPT = Path(__file__).resolve().parent.parent / "tools" / "name-parts.py"
 
 
 @pytest.fixture(scope="module")
 def outil():
-    spec = importlib.util.spec_from_file_location("nommer_morceaux", SCRIPT)
+    spec = importlib.util.spec_from_file_location("name_parts", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

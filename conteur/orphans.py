@@ -52,7 +52,7 @@ def is_orphan(name: str) -> bool:
     `<stamp>_00002_Source-Baffle__sans-nom.wav`.
 
     The slug is therefore read from the last `__` segment when there is one,
-    the same rule tools/nommer-morceaux.py uses to decide a file is already
+    the same rule tools/name-parts.py uses to decide a file is already
     named. Splitting on the first underscore made every imported take
     invisible to recovery.
     """

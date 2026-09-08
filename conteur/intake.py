@@ -99,7 +99,7 @@ def import_name(started: datetime, card_name: str,
     The start time sorts it with the takes recorded directly. The card name is
     kept because it will not be reproducible — the take counter restarts at
     00001 after an erase. The double underscore before the slug is the
-    idempotence marker that tools/nommer-morceaux.py already relies on.
+    idempotence marker that tools/name-parts.py already relies on.
     """
     return f"{_stamp(started)}_{Path(card_name).stem}__{slug}.wav"
 

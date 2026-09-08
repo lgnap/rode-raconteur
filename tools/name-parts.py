@@ -11,7 +11,7 @@ indication of what belonged together, or breaking their rejoining. A
 provisional `__sans-nom` tail is replaced rather than kept, so a file never
 carries the placeholder and a real name at once.
 
-    nommer-morceaux.py DOSSIER_OU_FICHIERS...
+    name-parts.py DIRS_OR_FILES...
 
 SPDX-License-Identifier: MIT
 """
@@ -85,17 +85,17 @@ def annotate(path: Path, model) -> tuple[Path, str] | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("cibles", nargs="+", type=Path,
-                        help="dossiers ou fichiers WAV")
+    parser.add_argument("targets", nargs="+", type=Path,
+                        help="directories or WAV files")
     args = parser.parse_args()
 
-    files = collect(args.cibles)
+    files = collect(args.targets)
     if not files:
-        print("aucun fichier WAV trouvé")
+        print("no WAV file found")
         return 1
 
     model = load_model()
-    print(f"modèle sur {chosen_device()}, {len(files)} fichier(s)\n")
+    print(f"model on {chosen_device()}, {len(files)} file(s)\n")
     done = skipped = 0
     for path in files:
         try:
@@ -104,13 +104,13 @@ def main() -> int:
             print(f"  !! {path.name} : {type(error).__name__} : {error}")
             continue
         if result is None:
-            print(f"  =  {path.name}  (déjà annoté)")
+            print(f"  =  {path.name}  (already annotated)")
             skipped += 1
             continue
         target, origin = result
         print(f"  -> {target.name}   [{origin_label(origin)}]")
         done += 1
-    print(f"\n{done} renommé(s), {skipped} ignoré(s)")
+    print(f"\n{done} renamed, {skipped} skipped")
     return 0
 
 

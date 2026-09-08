@@ -8,7 +8,7 @@ import pytest
 
 from conteur.orphans import find_orphans, is_orphan, is_placeholder, parse_timestamp
 
-SCRIPT = Path(__file__).resolve().parent.parent / "tools" / "nommer-morceaux.py"
+SCRIPT = Path(__file__).resolve().parent.parent / "tools" / "name-parts.py"
 
 
 @pytest.fixture(scope="module")

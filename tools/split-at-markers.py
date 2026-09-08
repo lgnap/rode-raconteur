@@ -18,8 +18,8 @@ has lost its markers and cannot be split again.
 The audio is never re-encoded: the bytes of the `data` chunk are copied
 verbatim. Each part's BWF timestamp is shifted so it stays correct.
 
-    decouper-marqueurs.py FICHIER.WAV [...] [--sortie DOSSIER]
-    decouper-marqueurs.py --rejoindre DOSSIER_DE_MORCEAUX
+    split-at-markers.py FILE.WAV [...] [--out DIR]
+    split-at-markers.py --rejoin DIR_OF_PARTS
 
 SPDX-License-Identifier: MIT
 """
@@ -151,7 +151,7 @@ def write_segment(rec: Recording, start: int, end: int, target: Path) -> None:
 REJOIN = """#!/bin/sh
 # Recolle les morceaux dans l'ordre et rend l'original à l'octet près.
 # Une césure qui n'avait pas lieu d'être s'annule donc sans perte.
-exec python3 "{tool}" --rejoindre "$(dirname "$0")"
+exec python3 "{tool}" --rejoin "$(dirname "$0")"
 """
 
 
@@ -159,7 +159,7 @@ def split(path: Path, out_root: Path) -> int:
     rec = Recording(path)
     parts = rec.boundaries()
     if len(parts) < 2:
-        print(f"  {path.name} : aucun marqueur, ignoré")
+        print(f"  {path.name}: no marker, skipped")
         return 0
 
     folder = out_root / path.stem
@@ -215,24 +215,24 @@ def rejoin(folder: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("fichiers", nargs="*", type=Path)
-    parser.add_argument("--sortie", type=Path, default=Path("."),
-                        help="dossier où déposer les morceaux (défaut : dossier courant)")
-    parser.add_argument("--rejoindre", type=Path, metavar="DOSSIER",
-                        help="recoller les morceaux d'un dossier")
+    parser.add_argument("files", nargs="*", type=Path)
+    parser.add_argument("--out", type=Path, default=Path("."),
+                        help="where to write the parts (default: current directory)")
+    parser.add_argument("--rejoin", type=Path, metavar="DIR",
+                        help="stitch the parts of a directory back together")
     args = parser.parse_args()
 
-    if args.rejoindre:
-        target = rejoin(args.rejoindre)
-        print(f"recollé : {target}")
+    if args.rejoin:
+        target = rejoin(args.rejoin)
+        print(f"rejoined: {target}")
         return 0
-    if not args.fichiers:
-        parser.error("indiquer au moins un fichier, ou --rejoindre")
+    if not args.files:
+        parser.error("give at least one file, or --rejoin")
 
     cut = 0
-    for path in args.fichiers:
-        cut += split(path, args.sortie)
-    print(f"\n{cut} morceaux écrits")
+    for path in args.files:
+        cut += split(path, args.out)
+    print(f"\n{cut} parts written")
     return 0
 
 

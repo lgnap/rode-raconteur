@@ -1,6 +1,7 @@
 """Reading a RØDE card: identity, inventory, and bytes."""
 
 import hashlib
+import os
 from datetime import datetime
 
 import pytest
@@ -45,8 +46,63 @@ def test_a_zero_byte_entry_is_a_take_in_progress_and_is_skipped(tmp_path):
     img = tmp_path / "card.img"
     build(img, {"00001_Source.WAV": b"a" * 500, "00002_Source.WAV": b""})
     with img.open("rb") as fh:
-        takes = Card(fh).takes()
+        card = Card(fh)
+        takes = card.takes()
     assert [t.name for t in takes] == ["00001_Source.WAV"]
+    # Skipped, but reported: the entry is a recording in progress, whose
+    # clusters already hold audio, so "the list is short" and "the card holds
+    # nothing more" are different statements. The erase lock reads this.
+    assert card.open_takes == 1
+
+
+def test_a_card_with_no_open_take_reports_none(tmp_path):
+    img = tmp_path / "card.img"
+    build(img, {"00001_Source.WAV": b"a" * 500})
+    with img.open("rb") as fh:
+        card = Card(fh)
+        card.takes()
+    assert card.open_takes == 0
+
+
+def test_refresh_makes_the_next_read_see_the_card_again(tmp_path):
+    """The FAT is cached for the length of an import; across an erase, or a
+    freshness check, the cache is exactly the wrong answer."""
+    img = tmp_path / "card.img"
+    build(img, {"00001_Source.WAV": b"a" * 500})
+    with img.open("rb") as fh:
+        card = Card(fh)
+        card.takes()
+        assert card._fat is not None
+        card.refresh()
+        assert card._fat is None
+        assert [t.name for t in card.takes()] == ["00001_Source.WAV"]
+
+
+def test_refresh_drops_the_pages_the_kernel_cached_for_the_device(tmp_path,
+                                                                  monkeypatch):
+    """Forgetting our own cache is half the job: the reads that follow go back
+    through the same descriptor, and the kernel answers them from pages it
+    cached before the erase. An erase travels over HID, not over the block
+    device, so nothing tells the kernel those pages are stale — and the
+    re-inventory comes back with the card as it was, which is precisely the
+    answer refresh() exists to avoid.
+
+    Asserted at the syscall because there is nowhere else to see it: no read
+    from userspace can distinguish a cached page from a fresh one. The real
+    call is kept, so a descriptor that cannot take the advice still fails here.
+    """
+    img = tmp_path / "card.img"
+    build(img, {"00001_Source.WAV": b"a" * 500})
+    calls = []
+    real_fadvise = os.posix_fadvise
+    monkeypatch.setattr(
+        os, "posix_fadvise",
+        lambda *args: (calls.append(args), real_fadvise(*args))[1])
+    with img.open("rb") as fh:
+        card = Card(fh)
+        card.takes()
+        card.refresh()
+        assert calls == [(fh.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)]
 
 
 def test_streaming_returns_the_file_intact(tmp_path):

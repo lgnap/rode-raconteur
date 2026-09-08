@@ -12,6 +12,7 @@ nothing writes.
 """
 
 import hashlib
+import os
 import struct
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -83,6 +84,30 @@ class Card:
         self.data_start = ((reserved + num_fats * self.sectors_per_fat)
                            * self.bytes_per_sector)
         self._fat: bytes | None = None
+        # How many zero-byte entries the last takes() dropped. Read it after
+        # takes(), never before: nothing has been read from the card yet.
+        self.open_takes = 0
+
+    def refresh(self) -> None:
+        """Forget the cached FAT, so the next read sees the card as it is now.
+
+        The FAT is cached because reading it costs 3.6 MB, which is right for
+        the length of one import. It is wrong across an erase, and wrong for
+        the freshness check that asks whether the card changed since the
+        import: both need the table on the card, not the one from before.
+
+        Our own cache is only half of it. The reads that follow go back
+        through the same descriptor, and the kernel answers them from the
+        pages it cached for this block device. An erase travels over HID, so
+        nothing on the block side tells the kernel those pages are now a
+        description of a card that no longer exists — and the re-inventory
+        comes back with the card as it was, which is the one answer this
+        method exists to prevent. POSIX_FADV_DONTNEED drops them; they are
+        read-only and therefore clean, so the kernel has nothing to write back
+        and nothing to refuse.
+        """
+        self._fat = None
+        os.posix_fadvise(self.fh.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
 
     @property
     def serial(self) -> str:
@@ -114,14 +139,28 @@ class Card:
     def takes(self) -> list[Take]:
         """The takes on the card, in directory order.
 
+        This is a filtered view, not the card's contents, and the difference
+        decides whether the card may be erased:
+
         Zero-byte entries are dropped: a transmitter starts recording the
         instant it leaves the charging case, so a device you have just
         connected always shows one open take with a size of zero. It is not an
-        empty file, it is a recording in progress.
+        empty file, it is a recording in progress — its clusters already hold
+        audio, which the transmitter finalises when it is docked again. Such
+        an entry is therefore counted in `open_takes`, so a caller can tell
+        "I saw no takes" from "there are no takes": a card mid-recording holds
+        audio that no import can have copied, and must never be erased.
+
+        Directory entries are skipped and deliberately not counted: a FAT
+        volume that has been mounted read-write anywhere carries a `System
+        Volume Information` folder, so treating a directory as hidden audio
+        would lock erasing for ever on cards that are perfectly accounted
+        for. The recorder itself writes takes flat at the root.
         """
         raw = b"".join(self._at(self._cluster_offset(c), self.cluster_size)
                        for c in self._chain(self.root_cluster))
         found: list[Take] = []
+        self.open_takes = 0
         long_parts: list[tuple[int, str]] = []
         for i in range(0, len(raw), 32):
             entry = raw[i:i + 32]
@@ -149,6 +188,7 @@ class Card:
             long_parts = []
             size = struct.unpack("<I", entry[28:32])[0]
             if size == 0:
+                self.open_takes += 1
                 continue
             cluster = ((struct.unpack("<H", entry[20:22])[0] << 16)
                        | struct.unpack("<H", entry[26:28])[0])

@@ -13,8 +13,9 @@ from PySide6.QtWidgets import (
 )
 
 from conteur.card import Card
+from conteur.devices import StorageDevice
 from conteur.devices import find_storage as default_find_storage
-from conteur.intake import intake
+from conteur.intake import CardVerdict, erase_card, intake
 from conteur.job import name_recording
 from conteur.job import rename_take as rename_take_file
 from conteur.ledger import Ledger
@@ -99,6 +100,9 @@ class ImportSnapshot:
         self.finished = False
         self.lines: list[str] = []
         self._pending: list = []
+        # One verdict per serial: the erase row a card is offered depends only
+        # on the last import's conclusion about it, not on the run history.
+        self.verdicts: dict[str, CardVerdict] = {}
 
     def queue_submit(self, path) -> None:
         """Record a take to hand to the naming queue — never do it here."""
@@ -154,6 +158,8 @@ class ImportSnapshot:
             elif event.kind == "failed":
                 self.failures += 1
                 self.lines.append(f"{event.take} → échec : {event.detail}")
+            elif event.kind == "verdict" and event.verdict is not None:
+                self.verdicts[event.verdict.serial] = event.verdict
             elif event.kind == "done":
                 # Marks the end of one card's intake, not of the whole run:
                 # with several cards, the run loop keeps going. `finished` is
@@ -232,10 +238,18 @@ class MainWindow(QMainWindow):
         self.level_bar.setTextVisible(False)
         self.takes = QListWidget()
 
+        # One erase button per card, no global one: rebuilt wholesale by
+        # _rebuild_erase_controls whenever the verdicts it reads from change.
+        self.erase_container = QWidget()
+        self._erase_layout = QVBoxLayout(self.erase_container)
+        self._erase_layout.setContentsMargins(0, 0, 0, 0)
+        self._erase_buttons: list[QPushButton] = []
+
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
         layout.addWidget(self.record_button)
         layout.addWidget(self.import_button)
+        layout.addWidget(self.erase_container)
         layout.addWidget(self.level_bar)
         layout.addWidget(self.takes)
         holder = QWidget()
@@ -266,6 +280,7 @@ class MainWindow(QMainWindow):
         self._poll.timeout.connect(self.refresh_device)
         self._poll.start(POLL_MS)
         self.refresh_device()
+        self._rebuild_erase_controls()
         # The model is loaded once at startup and stays resident. Loading it
         # off the UI thread avoids freezing the window at the first stop of a
         # capture, at the worst possible moment.
@@ -337,6 +352,9 @@ class MainWindow(QMainWindow):
             return
         self._clear_status()
         self._snapshot = ImportSnapshot()
+        # A verdict in flight means nothing yet: the previous run's cards must
+        # not stay offered to erase while a new one is reading them.
+        self._rebuild_erase_controls()
         self._import_stop.clear()
         cards = list(self._cards)
         stop = self._import_stop
@@ -406,7 +424,166 @@ class MainWindow(QMainWindow):
         # the status every two seconds, so the result of an import that took
         # minutes used to vanish before anyone read it.
         self.refresh_device()
+        self._rebuild_erase_controls()
         self._set_status(self._snapshot.summary(), sticky=True)
+
+    def erasable(self) -> list[tuple[str, bool, str]]:
+        """One row per card the last import looked at: serial, allowed, reason.
+
+        A card is offered only when the import accounted for all of it *and*
+        that account holds something: a verdict over zero takes is vacuously
+        complete, and `takes()` reports a filtered view — an open take is
+        dropped from it — so an empty list never proves an empty card. An
+        incomplete one is still listed, with how many takes are still
+        missing, so the user knows why it is locked rather than wondering
+        where the row went. There is
+        deliberately no row that erases everything: a global control would
+        hide which device is being wiped, and this is the one action that
+        cannot be undone.
+        """
+        rows = []
+        for serial, verdict in sorted(self._snapshot.verdicts.items()):
+            if verdict.complete and verdict.digests:
+                rows.append((serial, True,
+                             f"{verdict.verified} prise(s) vérifiée(s)"))
+            elif not verdict.digests:
+                # A verdict holding no digests proves nothing, and a card
+                # whose takes() came back empty is not the same thing as an
+                # empty card: an open take — a recording in progress — is
+                # filtered out of that list, as is anything in a
+                # subdirectory. Offering "Effacer — 0 prise(s) vérifiée(s)"
+                # would be an armed button with a nonsense label on it.
+                rows.append((serial, False, "aucune prise vérifiée"))
+            else:
+                missing = max(verdict.takes - verdict.verified, 1)
+                rows.append((serial, False, f"{missing} prise(s) non copiée(s)"))
+        return rows
+
+    def _rebuild_erase_controls(self) -> None:
+        """Rebuild the per-card erase buttons from `erasable()`, wholesale.
+
+        One button per card, never a control that erases more than one: that
+        is the single action here that cannot be undone, so a global button
+        would hide which device it wipes. Rebuilt from scratch rather than
+        diffed against the previous rows — at most a couple of cards are ever
+        docked at once, so a full rebuild costs nothing and there is no state
+        to keep in sync between one call and the next.
+
+        Called whenever the verdicts backing `erasable()` can have changed:
+        an import starting (clearing them), one finishing (populating them),
+        and an erase completing (dropping the one it erased) — never on the
+        two-second device poll, which touches none of that.
+        """
+        for button in self._erase_buttons:
+            # setParent(None), not removeWidget: removeWidget takes the button
+            # out of the layout but neither hides it nor reparents it, so a
+            # button just removed stays painted on the window until the
+            # deleteLater below is processed — one event loop turn during
+            # which a stale erase control is still on screen and clickable.
+            button.setParent(None)
+            button.deleteLater()
+        self._erase_buttons = []
+        for serial, allowed, reason in self.erasable():
+            if allowed:
+                button = QPushButton(f"Effacer {serial} — {reason}")
+                button.clicked.connect(
+                    lambda _checked=False, serial=serial: self.erase_serials([serial]))
+            else:
+                button = QPushButton(f"{serial} : {reason}")
+                button.setEnabled(False)
+            self._erase_layout.addWidget(button)
+            self._erase_buttons.append(button)
+
+    def erase_serials(self, serials: list[str]) -> None:
+        """Erase several cards one after another, re-resolving between each.
+
+        An erase makes the transmitter re-enumerate: its hidraw node comes
+        back under another number, and it starts presenting its own storage
+        alongside the charging case's. A device list taken once before the
+        first erase is therefore already wrong for the second — so the
+        resolution happens here, inside the loop, once per card, rather than
+        once before it.
+        """
+        for serial in serials:
+            verdict = self._snapshot.verdicts.get(serial)
+            if verdict is None:
+                continue
+            device = next((d for d in self._find_storage() if d.serial == serial), None)
+            if device is None:
+                self._set_status(f"{serial} : appareil absent", sticky=True)
+                continue
+            self._erase_one(device, verdict)
+
+    def _erase_one(self, device: StorageDevice, verdict: CardVerdict) -> None:
+        """Open one card and run its erase, routing events to the status line.
+
+        Runs synchronously on the GUI thread, and what it blocks on is not
+        the erase itself: the HID command takes 1.2-1.8 s whatever the card
+        holds, but `erase_card` first re-hashes every local copy the verdict
+        rests on — budgeted at 80 s for 30 GB, an order of magnitude more,
+        and scaling with exactly the quantity the command does not. That is
+        why the status line is set before the generator is drained: a window
+        that says nothing for a minute and a half reads as hung, and a user
+        who thinks it is hung reaches for the hardware — which, mid-erase, is
+        the one thing that can put the command on the wrong transmitter.
+
+        It still does not warrant the snapshot/timer machinery a full import
+        needs. If it grows further, it moves to the import thread — not to a
+        second one.
+
+        `erase_card` already refuses on a serial mismatch, a stale inventory,
+        a take in progress, a verdict proving nothing, a missing or tampered
+        local copy, a missing HID node and a node that has changed hands
+        since: this method only reports what it decides, never re-checks it.
+        """
+        serial = verdict.serial
+        self._set_status(f"{serial} : vérification des copies…", sticky=True)
+        try:
+            with device.block.open("rb") as fh:
+                card = Card(fh)
+                ledger = Ledger(card.serial)
+                # Carried rather than shown and forgotten: "unlogged" arrives
+                # before the line that reports the outcome, which would
+                # otherwise overwrite it. Both facts have to stay on screen —
+                # the card is gone, and nothing wrote that down.
+                unlogged = ""
+                for event in erase_card(card, ledger, verdict, device.hidraw):
+                    if event.kind == "erased":
+                        # The card no longer holds what the verdict describes;
+                        # offering to erase it again would be nonsense.
+                        self._snapshot.verdicts.pop(serial, None)
+                        self._set_status(f"{serial} : carte effacée", sticky=True)
+                    elif event.kind == "unlogged":
+                        unlogged = f", {event.detail}"
+                        self._set_status(f"{serial} : carte effacée{unlogged}",
+                                         sticky=True)
+                    elif event.kind == "reinventoried":
+                        # What the card actually holds now, read back rather
+                        # than assumed. Unreadable means mid-reenumeration,
+                        # the normal end of an erase, not a failure.
+                        found = ("état non relu" if event.detail is None
+                                 else f"{event.detail} prise(s) restante(s)")
+                        self._set_status(
+                            f"{serial} : carte effacée, {found}{unlogged}",
+                            sticky=True)
+                    elif event.kind == "refused":
+                        self._set_status(f"{serial} : {event.detail}", sticky=True)
+                    elif event.kind in ("failed", "unknown"):
+                        # "unknown" is deliberately not folded into "failed":
+                        # silence from the transmitter means the state is
+                        # undetermined, not that the erase failed, and
+                        # event.detail (built by erase_card) already says so
+                        # and already carries the serial, unlike "refused"'s.
+                        self._set_status(f"{event.detail}{unlogged}",
+                                         sticky=True)
+        except (OSError, ValueError) as error:
+            # The card vanishing between resolution and open (unplugged, or a
+            # transmitter mid-reenumeration from a previous erase) must not
+            # crash the window it was clicked from.
+            self._set_status(f"{serial} : {error}", sticky=True)
+            return
+        self.refresh_device()
+        self._rebuild_erase_controls()
 
     def _start_model_loading(self) -> None:
         if self._model_loader is not None:

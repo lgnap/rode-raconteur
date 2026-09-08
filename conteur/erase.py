@@ -4,6 +4,15 @@ The storage is read-only at device level, so this is the only way. The command
 is a plain write to /dev/hidrawN — the HID interface declares no OUT endpoint,
 so the kernel turns it into a SET_REPORT on the control pipe. It works; a
 failure will surface as a control-transfer error rather than a bulk one.
+
+The command itself — that a vendor HID channel erases the card at all, its
+opcode and the shape of its report — is krode's finding, published rather than
+merely shipped as a binary: github.com/LinuxRenaissance/krode, BSD-2-Clause.
+No code was taken from it; this is a reimplementation from what its author
+documented, plus what we measured on Wireless PRO hardware they do not have and
+sent back to them. See docs/krode.md, which is also where the reply byte is
+explained: it counts percent complete, and is not a status code — reading a
+progress report as an error is the mistake this module exists not to make.
 """
 
 import errno

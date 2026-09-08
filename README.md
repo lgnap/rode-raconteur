@@ -246,7 +246,7 @@ rather than erasing, when
 - the HID node stopped matching that card, which a re-dock during the hashing
   is enough to cause.
 
-The command is the vendor HID one described below. After it, the transmitter
+The command is the vendor HID one described below, which is [krode](https://github.com/LinuxRenaissance/krode)'s finding before it is anything of ours — its author documented the protocol instead of only shipping a binary, and none of this would exist otherwise. After it, the transmitter
 re-enumerates, so the card is **not** readable again straight away — the erase is
 recorded in the ledger with the number of takes it covered and, normally, no
 count of what is left, because nothing could be read back. Erasing two cards in a

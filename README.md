@@ -201,7 +201,7 @@ it yourself.
 - **Ctrl+C actually quits**, and a take in progress is written on the way out.
 
 Requires Python 3.12+, PySide6, PyAudio, faster-whisper, and a running Ollama.
-Tests: `python -m pytest` (172 tests, no hardware needed).
+Tests: `python -m pytest` (337 tests, no hardware needed).
 
 ### Naming files you already have
 

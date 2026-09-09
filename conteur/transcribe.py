@@ -55,8 +55,18 @@ def load_model():
     # CTranslate2 opens cuBLAS with dlopen at the first encode: building the
     # model on the GPU without it would fail later, mid-transcription.
     if preload_cuda_libraries():
-        _last_device = DEVICE
-        return WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
+        try:
+            model = WhisperModel(MODEL_NAME, device=DEVICE,
+                                 compute_type=COMPUTE_TYPE)
+        except Exception:       # noqa: BLE001 - the CPU is still an option
+            # cuBLAS being loadable says nothing about the GPU still being
+            # usable: after an Xid fault the driver keeps answering
+            # nvidia-smi and refuses every CUDA context until the machine is
+            # rebooted. Naming on the CPU is slow; losing naming is worse.
+            pass
+        else:
+            _last_device = DEVICE
+            return model
 
     _last_device = "cpu"
     return WhisperModel(MODEL_NAME, device="cpu", compute_type=CPU_COMPUTE_TYPE)

@@ -61,12 +61,21 @@ class _FakeWhisperModel:
         _FakeWhisperModel.calls.append((name, device, compute_type))
 
 
-def _install_fake_whisper(monkeypatch):
+class _GpuRefusingWhisperModel(_FakeWhisperModel):
+    """The GPU is visible, and refuses every context all the same."""
+
+    def __init__(self, name, device=None, compute_type=None):
+        if device == "cuda":
+            raise RuntimeError("CUDA failed with error unknown error")
+        super().__init__(name, device=device, compute_type=compute_type)
+
+
+def _install_fake_whisper(monkeypatch, model_class=_FakeWhisperModel):
     import sys
     import types
 
     module = types.ModuleType("faster_whisper")
-    module.WhisperModel = _FakeWhisperModel
+    module.WhisperModel = model_class
     _FakeWhisperModel.calls = []
     monkeypatch.setitem(sys.modules, "faster_whisper", module)
 
@@ -90,6 +99,20 @@ def test_the_model_falls_back_to_cpu_without_cublas(monkeypatch):
 
     _install_fake_whisper(monkeypatch)
     monkeypatch.setattr(cuda_mod, "preload_cuda_libraries", lambda: False)
+    t.load_model()
+    assert _FakeWhisperModel.calls == [("large-v3", "cpu", "int8")]
+    assert t.chosen_device() == "cpu"
+
+
+def test_the_model_falls_back_to_cpu_when_the_gpu_refuses(monkeypatch):
+    """cuBLAS being loadable says nothing about the GPU still being usable:
+    after an Xid fault the driver refuses every context until the machine is
+    rebooted. Naming on the CPU is slow; losing naming altogether is worse."""
+    import conteur.cuda as cuda_mod
+    import conteur.transcribe as t
+
+    _install_fake_whisper(monkeypatch, _GpuRefusingWhisperModel)
+    monkeypatch.setattr(cuda_mod, "preload_cuda_libraries", lambda: True)
     t.load_model()
     assert _FakeWhisperModel.calls == [("large-v3", "cpu", "int8")]
     assert t.chosen_device() == "cpu"

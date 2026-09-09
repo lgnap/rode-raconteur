@@ -59,9 +59,16 @@ def install_interrupt_handler(app, interval_ms: int = 200):
     return timer
 
 
+class ModelUnavailable(RuntimeError):
+    """No transcription model: nothing can be named. The message says why."""
+
+
 def describe_error(error: BaseException) -> str:
     """Return a readable cause, translating the most opaque known failures."""
     text = str(error).strip() or error.__class__.__name__
+    if isinstance(error, ModelUnavailable):
+        # Already an explanation; prefixing it with a class name buries it.
+        return text
     if "cublas" in text.lower() or "cudnn" in text.lower():
         return (
             "bibliothèques CUDA introuvables, transcription impossible "
@@ -318,7 +325,12 @@ class MainWindow(QMainWindow):
             self._queue.start()
 
     def _naming_runner(self, path: Path, at: datetime):
-        return name_recording(path, at, self._await_model())
+        model = self._await_model()
+        if model is None:
+            # Runs on the queue thread, which must not touch Qt: raising is
+            # how the cause reaches the window, through on_done().
+            raise ModelUnavailable(f"{MODEL_FAILED} : {self._model_error}")
+        return name_recording(path, at, model)
 
     def recover_orphans(self, root=None) -> int:
         """Re-queue takes left unnamed by an earlier session.

@@ -2030,3 +2030,37 @@ def test_an_erase_that_could_not_be_written_down_says_so_and_still_erased(
     text = win.status_label.text()
     assert "carte effacée" in text
     assert "non consigné" in text
+
+
+# --- naming with no model at all ---
+
+
+def _finished_thread():
+    import threading
+
+    thread = threading.Thread(target=lambda: None)
+    thread.start()
+    thread.join()
+    return thread
+
+
+def test_naming_without_a_model_names_the_cause(qapp, tmp_path):
+    """A take recovered or imported goes through the queue, far from the
+    guard the capture path has. Without its own guard the user is told
+    "'NoneType' object has no attribute 'transcribe'", which names nothing.
+    """
+    from datetime import datetime
+
+    win = MainWindow(find_rx=lambda: None, queue=None, orphan_root=tmp_path)
+    win._model = None
+    win._model_error = RuntimeError("CUDA failed with error unknown error")
+    win._model_loader = _finished_thread()
+
+    with pytest.raises(app_mod.ModelUnavailable) as raised:
+        win._naming_runner(tmp_path / "2026-09-09_150521_sans-nom.wav", datetime.now())
+
+    assert app_mod.MODEL_FAILED in str(raised.value)
+    assert "CUDA failed with error unknown error" in str(raised.value)
+    # describe_error() prefixes the class name of an unknown failure; here the
+    # message is already the explanation, and must reach the window as it is.
+    assert app_mod.describe_error(raised.value) == str(raised.value)
